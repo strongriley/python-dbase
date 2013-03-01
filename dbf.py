@@ -2,11 +2,11 @@
 =========
 Copyright
 =========
-    - Copyright: 2008-2012 Ad-Mail, Inc -- All rights reserved.
+    - Portions copyright: 2008-2012 Ad-Mail, Inc -- All rights reserved.
     - Author: Ethan Furman
-    - Contact: ethanf@admailinc.com
-    - Organization: Ad-Mail, Inc.
-    - Version: 0.94.004 as of 17 Aug 2012
+    - Version: 0.95.001 as of 28 Feb 2013
+    - Portions copyright: 2012 Ethan Furman -- All rights reserved.
+    - Contact: ethan@stoneleaf.us
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -31,18 +31,18 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-version = (0, 94, 5)
+version = (0, 95, 1)
 
 __all__ = (
-        'Table', 'Record', 'List', 'Index', 'Iter', 'Date', 'DateTime', 'Time', 'CodePage',
-        'create_template', 'delete', 'field_names', 'gather', 'is_deleted',
+        'Table', 'Record', 'List', 'Index', 'Relation', 'Iter', 'Date', 'DateTime', 'Time',
+        'CodePage', 'create_template', 'delete', 'field_names', 'gather', 'is_deleted',
         'recno', 'source_table', 'reset', 'scatter', 'undelete',
         'DbfError', 'DataOverflowError', 'BadDataError', 'FieldMissingError',
-        'InvalidFieldSpecError', 'NonUnicodeError', 'NotFoundError',
+        'FieldSpecError', 'NonUnicodeError', 'NotFoundError',
         'DbfWarning', 'Eof', 'Bof', 'DoNotIndex',
         'Null', 'Char', 'Date', 'DateTime', 'Time', 'Logical', 'Quantum',
         'NullDate', 'NullDateTime', 'NullTime', 'Vapor',
-        'Process',
+        'Process', 'Templates',
         'Truth', 'Falsth', 'Unknown', 'NoneType', 'Decimal', 'IndexLocation',
         'guess_table_type', 'table_type',
         'add_fields', 'delete_fields', 'get_fields', 'rename_field',
@@ -73,20 +73,30 @@ py_ver = sys.version_info[:2]
 # Return None if True, else raise BadDataError
 LOGICAL_BAD_IS_NONE = True
 
-input_decoding = 'ascii'  # treat non-unicode data as ...
-default_codepage = 'ascii'  # if no codepage specified on dbf creation, use this
-default_type = 'db3'  # default format if none specified
+# treat non-unicode data as ...
+input_decoding = 'ascii'
+
+# if no codepage specified on dbf creation, use this
+default_codepage = 'ascii'
+
+# default format if none specified
+default_type = 'db3'
 
 temp_dir = os.environ.get("DBF_TEMP") or os.environ.get("TMP") or os.environ.get("TEMP") or ""
+
 
 # user-defined pql functions  (pql == primitive query language)
 # it is not real sql and won't be for a long time (if ever)
 pql_user_functions = dict()
 
-_Template_Records = dict()  # signature:_meta of template records
+# signature:_meta of template records
+_Template_Records = dict()
+
+Integer = int, long
+String = str, unicode
 
 # 2.7 constructs
-if sys.version_info[:2] < (2, 7):
+if py_ver < (2, 7):
     # Decimal does not accept float inputs until 2.7
     def Decimal(val=0):
         if isinstance(val, float):
@@ -95,16 +105,22 @@ if sys.version_info[:2] < (2, 7):
 
     bytes = str
 
+
 # 2.6 constructs
-if sys.version_info[:2] < (2, 6):
+if py_ver < (2, 6):
+
     # define next()
     def next(iterator):
         return iterator.next()
 
+
+    # 2.6+ property for 2.5-,
+    # define our own property type
     class property(object):
         """
-        2.6 properties for <= 2.5
+        2.6 properties for 2.5-
         """
+
         def __init__(self, fget=None, fset=None, fdel=None, doc=None):
             self.fget = fget
             self.fset = fset
@@ -141,10 +157,13 @@ if sys.version_info[:2] < (2, 6):
             self.fdel = func
             return self
 
+
 # 2.5 constructs
+
 try:
     all
 except NameError:
+
     def all(iterable):
         for element in iterable:
             if not element:
@@ -156,15 +175,20 @@ except NameError:
             if element:
                 return True
         return False
+
     SEEK_SET, SEEK_CUR, SEEK_END = range(3)
+
 else:
+
     SEEK_SET, SEEK_CUR, SEEK_END = os.SEEK_SET, os.SEEK_CUR, os.SEEK_END
 
 # collections.defaultdict for <= 2.4
 try:
     from collections import defaultdict
 except ImportError:
+
     class defaultdict(dict):
+
         def __init__(self, default_factory=None, *a, **kw):
             if (default_factory is not None and
                 not hasattr(default_factory, '__call__')):
@@ -206,13 +230,32 @@ except ImportError:
             return 'defaultdict(%s, %s)' % (self.default_factory,
                                             dict.__repr__(self))
 
-
 # other constructs
+
+class LazyAttr(object):
+    """
+    doesn't create object until actually accessed
+    """
+
+    def __init__(yo, func=None, doc=None):
+        yo.fget = func
+        yo.__doc__ = doc or func.__doc__
+    
+    def __call__(yo, func):
+        yo.fget = func
+
+    def __get__(yo, instance, owner):
+        if instance is None:
+            return yo
+        return yo.fget(instance)
+
+
 class MutableDefault(object):
     """
     Lives in the class, and on first access calls the supplied factory and
     maps the result into the instance it was called on
     """
+
     def __init__(self, func):
         self._name = func.__name__
         self.func = func
@@ -232,13 +275,16 @@ class MutableDefault(object):
 
 
 def none(*args, **kwargs):
+    """
+    because we can't do `NoneType()`
+    """
     return None
 
 # Constants
 SYSTEM = 0x01
 NULLABLE = 0x02
 BINARY = 0x04
- #AUTOINC = 0x0c         # not currently supported (not vfp 6)
+#AUTOINC = 0x0c         # not currently supported (not vfp 6)
 
 TYPE = 0
 START = 1
@@ -251,15 +297,15 @@ EMPTY = 7
 NULL = 8
 
 FIELD_FLAGS = {
-        'null': NULLABLE,
-        'binary': BINARY,
-        'nocptrans': BINARY,
-        #'autoinc': AUTOINC,
+        'null'      : NULLABLE,
+        'binary'    : BINARY,
+        'nocptrans' : BINARY,
+        #'autoinc'  : AUTOINC,
 
-        NULLABLE: 'null',
-        BINARY: 'binary',
-        SYSTEM: 'system',
-        #AUTOINC: 'autoinc',
+        NULLABLE    : 'null',
+        BINARY      : 'binary',
+        SYSTEM      : 'system',
+        #AUTOINC    : 'autoinc',
         }
 
 IN_MEMORY = 0
@@ -271,35 +317,49 @@ READ_WRITE = 'read-write'
 
 
 # warnings and errors
+
 class DbfError(Exception):
-    """Fatal errors elicit this response."""
-    pass
+    """
+    Fatal errors elicit this response.
+    """
 
 
 class DataOverflowError(DbfError):
-    """Raised when data is too large for field"""
+    """
+    Data too large for field
+    """
+
     def __init__(self, message, data=None):
         DbfError.__init__(self, message)
         self.data = data
 
 
 class BadDataError(DbfError):
-    """General error raised when bad data detected in table"""
+    """
+    bad data in table
+    """
+
     def __init__(self, message, data=None):
         DbfError.__init__(self, message)
         self.data = data
 
 
 class FieldMissingError(KeyError, DbfError):
-    """Raised when field does not exist in table"""
+    """
+    Field does not exist in table
+    """
+
     def __init__(self, fieldname):
         KeyError.__init__(self, '%s:  no such field in table' % fieldname)
         DbfError.__init__(self, '%s:  no such field in table' % fieldname)
         self.data = fieldname
 
 
-class InvalidFieldSpecError(DbfError, ValueError):
-    """Raised when a field specification is invalid"""
+class FieldSpecError(DbfError, ValueError):
+    """
+    invalid field specification
+    """
+
     def __init__(self, message):
         ValueError.__init__(self, message)
         DbfError.__init__(self, message)
@@ -307,38 +367,51 @@ class InvalidFieldSpecError(DbfError, ValueError):
 
 class NonUnicodeError(DbfError):
     """
-    Raised when data for table is not in unicode
+    Data for table not in unicode
     """
+
     def __init__(self, message=None):
         DbfError.__init__(self, message)
 
 
-class NotFoundError(DbfError, ValueError):
-    """Raised when record criteria not met"""
+class NotFoundError(DbfError, ValueError, KeyError, IndexError):
+    """
+    record criteria not met
+    """
+
     def __init__(self, message=None, data=None):
         ValueError.__init__(self, message)
+        KeyError.__init__(self, message)
+        IndexError.__init__(self, message)
         DbfError.__init__(self, message)
         self.data = data
 
 
 class DbfWarning(Exception):
     """
-    Base class for signaling exceptions, raised during normal operations
+    Normal operations elicit this response
     """
-    pass
 
 
 class Eof(DbfWarning, StopIteration):
-    """End of file reached"""
+    """
+    End of file reached
+    """
+
     message = 'End of file reached'
+
     def __init__(self):
         StopIteration.__init__(self, self.message)
         DbfWarning.__init__(self, self.message)
 
 
 class Bof(DbfWarning, StopIteration):
-    """Beginning of file reached"""
+    """
+    Beginning of file reached
+    """
+
     message = 'Beginning of file reached'
+
     def __init__(self):
         StopIteration.__init__(self, self.message)
         DbfWarning.__init__(self, self.message)
@@ -346,24 +419,28 @@ class Bof(DbfWarning, StopIteration):
 
 class DoNotIndex(DbfWarning):
     """
-    Returned by indexing functions to suppress a record from becoming
-    part of the index
+    Returned by indexing functions to suppress a record from becoming part of the index
     """
+
     message = 'Not indexing record'
+
     def __init__(self):
         DbfWarning.__init__(self, self.message)
 
 
 # wrappers around datetime and logical objects to allow null values
-Unknown = Other = object()  # gets replaced later by their final values
 
+# gets replaced later by their final values
+Unknown = Other = object()
 
 class NullType(object):
     """
     Null object -- any interaction returns Null
     """
+
     def _null(self, *args, **kwargs):
         return self
+
     __eq__ = __ne__ = __ge__ = __gt__ = __le__ = __lt__ = _null
     __add__ = __iadd__ = __radd__ = _null
     __sub__ = __isub__ = __rsub__ = _null
@@ -385,7 +462,7 @@ class NullType(object):
         return self, self
     __rdivmod__ = __divmod__
 
-    if sys.version_info[:2] >= (2, 6):
+    if py_ver >= (2, 6):
         __hash__ = None
     else:
         def __hash__(self):
@@ -410,17 +487,22 @@ class NullType(object):
 
     def __str__(self):
         return ''
+
 NullType.null = object.__new__(NullType)
 Null = NullType()
 
 
 class Vapor(object):
-    """used in Vapor Records -- compares unequal with everything"""
+    """
+    used in Vapor Records -- compares unequal with everything
+    """
+
     def __eq__(self, other):
         return False
 
     def __ne__(self, other):
         return True
+
 Vapor = Vapor()
 
 
@@ -428,52 +510,68 @@ class Char(unicode):
     """
     Strips trailing whitespace, and ignores trailing whitespace for comparisons
     """
+
     def __new__(cls, text=''):
         if not isinstance(text, (str, unicode, cls)):
             raise ValueError("Unable to automatically coerce %r to Char" % text)
         result = unicode.__new__(cls, text.rstrip())
         result.field_size = len(text)
         return result
+
     __hash__ = unicode.__hash__
 
     def __eq__(self, other):
-        "ignores trailing whitespace"
+        """
+        ignores trailing whitespace
+        """
         if not isinstance(other, (self.__class__, str, unicode)):
             return NotImplemented
         return unicode(self) == other.rstrip()
 
     def __ge__(self, other):
-        "ignores trailing whitespace"
+        """
+        ignores trailing whitespace
+        """
         if not isinstance(other, (self.__class__, str, unicode)):
             return NotImplemented
         return unicode(self) >= other.rstrip()
 
     def __gt__(self, other):
-        "ignores trailing whitespace"
+        """
+        ignores trailing whitespace
+        """
         if not isinstance(other, (self.__class__, str, unicode)):
             return NotImplemented
         return unicode(self) > other.rstrip()
 
     def __le__(self, other):
-        "ignores trailing whitespace"
+        """
+        ignores trailing whitespace
+        """
         if not isinstance(other, (self.__class__, str, unicode)):
             return NotImplemented
         return unicode(self) <= other.rstrip()
 
     def __lt__(self, other):
-        "ignores trailing whitespace"
+        """
+        ignores trailing whitespace
+        """
         if not isinstance(other, (self.__class__, str, unicode)):
             return NotImplemented
         return unicode(self) < other.rstrip()
 
     def __ne__(self, other):
-        "ignores trailing whitespace"
+        """
+        ignores trailing whitespace
+        """
         if not isinstance(other, (self.__class__, str, unicode)):
             return NotImplemented
         return unicode(self) != other.rstrip()
 
     def __nonzero__(self):
-        "ignores trailing whitespace"
+        """
+        ignores trailing whitespace
+        """
         return bool(unicode(self))
 
     def __add__(self, other):
@@ -486,6 +584,7 @@ class Date(object):
     """
     adds null capable datetime.date constructs
     """
+
     __slots__ = ['_date']
 
     def __new__(cls, year=None, month=0, day=0):
@@ -596,6 +695,7 @@ class Date(object):
 
     def __nonzero__(self):
         return bool(self._date)
+
     __radd__ = __add__
 
     def __rsub__(self, other):
@@ -664,6 +764,7 @@ class Date(object):
             return "%04d%02d%02d" % self.timetuple()[:3]
         else:
             return '        '
+
 Date.max = Date(datetime.date.max)
 Date.min = Date(datetime.date.min)
 Date._null_date = object.__new__(Date)
@@ -675,6 +776,7 @@ class DateTime(object):
     """
     adds null capable datetime.datetime constructs
     """
+
     __slots__ = ['_datetime']
 
     def __new__(cls, year=None, month=0, day=0, hour=0, minute=0, second=0, microsec=0):
@@ -683,10 +785,13 @@ class DateTime(object):
             return cls._null_datetime
         ndt = object.__new__(cls)
         if isinstance(year, (datetime.datetime)):
-            ndt._datetime = year
-        elif isinstance(year, (DateTime)):
+            microsec = year.microsecond
+            hour, minute, second = year.hour, year.minute, year.second
+            year, month, day = year.year, year.month, year.day
+        if isinstance(year, (DateTime)):
             ndt._datetime = year._datetime
         elif year is not None:
+            microsec = microsec // 1000 * 1000
             ndt._datetime = datetime.datetime(year, month, day, hour, minute, second, microsec)
         return ndt
 
@@ -802,6 +907,7 @@ class DateTime(object):
 
     def __nonzero__(self):
         return bool(self._datetime)
+
     __radd__ = __add__
 
     def __rsub__(self, other):
@@ -813,7 +919,6 @@ class DateTime(object):
             return DateTime(other - self._datetime)
         else:
             return NotImplemented
-
 
     def __repr__(self):
         if self:
@@ -874,6 +979,7 @@ class DateTime(object):
             return Time(self.hour, self.minute, self.second, self.microsecond)
         return Time()
 
+    @classmethod
     def utcnow(cls):
         return cls(datetime.datetime.utcnow())
 
@@ -892,18 +998,23 @@ class Time(object):
     """
     adds null capable datetime.time constructs
     """
+
     __slots__ = ['_time']
 
     def __new__(cls, hour=None, minute=0, second=0, microsec=0):
-        """hour may be a datetime.time"""
+        """
+        hour may be a datetime.time
+        """
         if hour is None or hour is Null:
             return cls._null_time
         nt = object.__new__(cls)
         if isinstance(hour, (datetime.time)):
-            nt._time = hour
-        elif isinstance(hour, (Time)):
+            microsec = hour.microsecond
+            hour, minute, second = hour.hour, hour.minute, hour.second
+        if isinstance(hour, (Time)):
             nt._time = hour._time
         elif hour is not None:
+            microsec = microsec // 1000 * 1000
             nt._time = datetime.time(hour, minute, second, microsec)
         return nt
 
@@ -1022,6 +1133,7 @@ class Time(object):
 
     def __nonzero__(self):
         return bool(self._time)
+
     __radd__ = __add__
 
     def __rsub__(self, other):
@@ -1063,6 +1175,7 @@ class Time(object):
     @staticmethod
     def now():
         return DateTime.now().time()
+
 Time.max = Time(datetime.time.max)
 Time.min = Time(datetime.time.min)
 Time._null_time = object.__new__(Time)
@@ -1076,10 +1189,11 @@ class Logical(object):
 
     Accepts values of True, False, or None/Null
     """
+
     def __new__(cls, value=None):
         if value is None or value is Null or value is Other or value is Unknown:
             return cls.unknown
-        elif isinstance(value, (str, unicode)):
+        elif isinstance(value, String):
             if value.lower() in ('t', 'true', 'y', 'yes', 'on'):
                 return cls.true
             elif value.lower() in ('f', 'false', 'n', 'no', 'off'):
@@ -1099,6 +1213,8 @@ class Logical(object):
         except Exception:
             return NotImplemented
         return int(x) + i
+
+
     __radd__ = __iadd__ = __add__
 
     def __sub__(x, y):
@@ -1109,6 +1225,7 @@ class Logical(object):
         except Exception:
             return NotImplemented
         return int(x) - i
+
     __isub__ = __sub__
 
     def __rsub__(y, x):
@@ -1130,6 +1247,7 @@ class Logical(object):
         except Exception:
             return NotImplemented
         return int(x) * i
+
     __rmul__ = __imul__ = __mul__
 
     def __div__(x, y):
@@ -1140,6 +1258,7 @@ class Logical(object):
         except Exception:
             return NotImplemented
         return int(x).__div__(i)
+
     __idiv__ = __div__
 
     def __rdiv__(y, x):
@@ -1159,6 +1278,7 @@ class Logical(object):
         except Exception:
             return NotImplemented
         return int(x).__truediv__(i)
+
     __itruediv__ = __truediv__
 
     def __rtruediv__(y, x):
@@ -1178,6 +1298,7 @@ class Logical(object):
         except Exception:
             return NotImplemented
         return int(x).__floordiv__(i)
+
     __ifloordiv__ = __floordiv__
 
     def __rfloordiv__(y, x):
@@ -1215,6 +1336,7 @@ class Logical(object):
         except Exception:
             return NotImplemented
         return int(x) % i
+
     __imod__ = __mod__
 
     def __rmod__(y, x):
@@ -1237,6 +1359,7 @@ class Logical(object):
         if x is Unknown:
             return Unknown
         return int(x) ** i
+
     __ipow__ = __pow__
 
     def __rpow__(y, x):
@@ -1255,6 +1378,7 @@ class Logical(object):
         if isinstance(y, type(None)) or x is Unknown or y is Unknown:
             return Unknown
         return int(x.value) << int(y)
+
     __ilshift__ = __lshift__
 
     def __rlshift__(y, x):
@@ -1266,6 +1390,7 @@ class Logical(object):
         if isinstance(y, type(None)) or x is Unknown or y is Unknown:
             return Unknown
         return int(x.value) >> int(y)
+
     __irshift__ = __rshift__
 
     def __rrshift__(y, x):
@@ -1326,10 +1451,12 @@ class Logical(object):
         return hex(x.value)
 
     def __and__(x, y):
-        """AND (conjunction) x & y:
+        """
+        AND (conjunction) x & y:
         True iff both x, y are True
         False iff at least one of x, y is False
-        Unknown otherwise"""
+        Unknown otherwise
+        """
         if (isinstance(x, int) and not isinstance(x, bool)) or (isinstance(y, int) and not isinstance(y, bool)):
             if x == 0 or y == 0:
                 return 0
@@ -1343,6 +1470,7 @@ class Logical(object):
         elif isinstance(x, type(None)) or isinstance(y, type(None)) or y is Unknown or x is Unknown:
             return Unknown
         return NotImplemented
+
     __rand__ = __and__
 
     def __or__(x, y):
@@ -1358,6 +1486,7 @@ class Logical(object):
         elif isinstance(x, type(None)) or isinstance(y, type(None)) or y is Unknown or x is Unknown:
             return Unknown
         return NotImplemented
+
     __ror__ = __or__
 
     def __xor__(x, y):
@@ -1368,14 +1497,15 @@ class Logical(object):
             return int(x) ^ int(y)
         elif x in (True, Truth, False, Falsth) and y in (True, Truth, False, Falsth):
             return {
-                    (True, True): Falsth,
-                    (True, False): Truth,
-                    (False, True): Truth,
+                    (True, True)  : Falsth,
+                    (True, False) : Truth,
+                    (False, True) : Truth,
                     (False, False): Falsth,
                    }[(x, y)]
         elif isinstance(x, type(None)) or isinstance(y, type(None)) or y is Unknown or x is Unknown:
             return Unknown
         return NotImplemented
+
     __rxor__ = __xor__
 
     def __nonzero__(x):
@@ -1448,6 +1578,7 @@ class Logical(object):
 
     def __str__(x):
         return x.string
+
 Logical.true = object.__new__(Logical)
 Logical.true.value = True
 Logical.true.string = 'T'
@@ -1466,12 +1597,13 @@ class Quantum(object):
     """
     Logical field return type that implements boolean algebra
 
-    Accepts values of True, False, or None/Null/Unknown/Other
+    Accepts values of True/On, False/Off, or None/Null/Unknown/Other
     """
+
     def __new__(cls, value=None):
         if value is None or value is Null or value is Other or value is Unknown:
             return cls.unknown
-        elif isinstance(value, (str, unicode)):
+        elif isinstance(value, String):
             if value.lower() in ('t', 'true', 'y', 'yes', 'on'):
                 return cls.true
             elif value.lower() in ('f', 'false', 'n', 'no', 'off'):
@@ -1602,7 +1734,7 @@ class Quantum(object):
     @classmethod
     def set_implication(cls, method):
         "sets IMP to material or relevant"
-        if not isinstance(method, (str, unicode)) or method.lower() not in ('material', 'relevant'):
+        if not isinstance(method, String) or method.lower() not in ('material', 'relevant'):
             raise ValueError("method should be 'material' (for strict boolean) or 'relevant', not %r'" % method)
         if method.lower() == 'material':
             cls.C = cls._C_material
@@ -1682,6 +1814,7 @@ class Quantum(object):
     __rrshift__ = None
     __rxor__ = J
     __xor__ = J
+
 Quantum.true = object.__new__(Quantum)
 Quantum.true.value = True
 Quantum.true.string = 'Y'
@@ -1698,18 +1831,24 @@ Other = Quantum()
 
 
 # Internal classes
+
 class _Navigation(object):
     """
     Navigation base class that provides VPFish movement methods
     """
+
     _index = -1
 
     def _nav_check(self):
-        "implemented by subclass; must return True if underlying structure meets need"
+        """
+        implemented by subclass; must return True if underlying structure meets need
+        """
         raise NotImplementedError()
 
     def _get_index(self, direction, n=1, start=None):
-        "returns index of next available record towards direction"
+        """
+        returns index of next available record towards direction
+        """
         if start is not None:
             index = start
         else:
@@ -1735,20 +1874,26 @@ class _Navigation(object):
 
     @property
     def bof(self):
-        "returns True if no more usable records towards the beginning of the table"
+        """
+        returns True if no more usable records towards the beginning of the table
+        """
         self._nav_check()
         index = self._get_index('reverse')
         return index == -1
 
     def bottom(self):
-        """sets record index to bottom of table (end of table)"""
+        """
+        sets record index to bottom of table (end of table)
+        """
         self._nav_check()
         self._index = len(self)
         return self._index
 
     @property
     def current_record(self):
-        "returns current record (deleted or not)"
+        """
+        returns current record (deleted or not)
+        """
         self._nav_check()
         index = self._index
         if index < 0:
@@ -1759,20 +1904,26 @@ class _Navigation(object):
 
     @property
     def current(self):
-        "returns current index"
+        """
+        returns current index
+        """
         self._nav_check()
         return self._index
 
     @property
     def eof(self):
-        "returns True if no more usable records towards the end of the table"
+        """
+        returns True if no more usable records towards the end of the table
+        """
         self._nav_check()
         index = self._get_index('forward')
         return index == len(self)
 
     @property
     def first_record(self):
-        "returns first available record (does not move index)"
+        """
+        returns first available record (does not move index)
+        """
         self._nav_check()
         index = self._get_index('forward', start=-1)
         if -1 < index < len(self):
@@ -1781,13 +1932,15 @@ class _Navigation(object):
             return RecordVaporWare('bof', self)
 
     def goto(self, where):
-        """changes the record pointer to the first matching (deleted) record
+        """
+        changes the record pointer to the first matching (deleted) record
         where should be either an integer, or 'top' or 'bottom'.
         top    -> before first record
-        bottom -> after last record"""
+        bottom -> after last record
+        """
         self._nav_check()
         max = len(self)
-        if isinstance(where, (int, long)):
+        if isinstance(where, Integer):
             if not -max <= where < max:
                 raise IndexError("Record %d does not exist" % where)
             if where < 0:
@@ -1801,7 +1954,9 @@ class _Navigation(object):
 
     @property
     def last_record(self):
-        "returns first available record (does not move index)"
+        """
+        returns first available record (does not move index)
+        """
         self._nav_check()
         index = self._get_index('reverse', start=len(self))
         if -1 < index < len(self):
@@ -1811,7 +1966,9 @@ class _Navigation(object):
 
     @property
     def next_record(self):
-        "returns next available record (does not move index)"
+        """
+        returns next available record (does not move index)
+        """
         self._nav_check()
         index = self._get_index('forward')
         if -1 < index < len(self):
@@ -1821,7 +1978,9 @@ class _Navigation(object):
 
     @property
     def prev_record(self):
-        "returns previous available record (does not move index)"
+        """
+        returns previous available record (does not move index)
+        """
         self._nav_check()
         index = self._get_index('reverse')
         if -1 < index < len(self):
@@ -1830,7 +1989,9 @@ class _Navigation(object):
             return RecordVaporWare('bof', self)
 
     def skip(self, n=1):
-        "move index to the next nth available record"
+        """
+        move index to the next nth available record
+        """
         self._nav_check()
         if n < 0:
             n *= -1
@@ -1846,7 +2007,9 @@ class _Navigation(object):
             return index
 
     def top(self):
-        """sets record index to top of table (beginning of table)"""
+        """
+        sets record index to top of table (beginning of table)
+        """
         self._nav_check()
         self._index = -1
         return self._index
@@ -1857,8 +2020,9 @@ class Record(object):
     Provides routines to extract and save data within the fields of a
     dbf record.
     """
-    __slots__ = ('_recnum', '_meta', '_data', '_old_data', '_dirty', '_memos',
-                 '_write_to_disk', '__weakref__')
+
+    __slots__ = ('_recnum', '_meta', '_data', '_old_data', '_dirty',
+                 '_memos', '_write_to_disk', '__weakref__')
 
     def __new__(cls, recnum, layout, kamikaze='', _fromdisk=False):
         """
@@ -1889,7 +2053,7 @@ class Record(object):
             raise BadDataError("%r recieved for record data" % kamikaze)
         if record._data[0] == '\x00':
             record._data[0] = ' '
-        if record._data[0] not in (' ', '*', '\x00'):  # the null byte strikes again!
+        if record._data[0] not in (' ', '*', '\x00'): # the null byte strikes again!
             raise DbfError("record data not correct -- first character should be a ' ' or a '*'.")
         if not _fromdisk and layout.location == ON_DISK:
             record._update_disk()
@@ -1924,7 +2088,7 @@ class Record(object):
                 s_value, o_value = self[field], other[field]
                 if s_value is not o_value and s_value != o_value:
                     return False
-        else:  # tuple
+        else: # tuple
             if len(self) != len(other):
                 return False
             for s_value, o_value in zip(self, other):
@@ -1943,7 +2107,7 @@ class Record(object):
 
     def __getattr__(self, name):
         if name[0:2] == '__' and name[-2:] == '__':
-            raise AttributeError('Method %s is not implemented.' % name)
+            raise AttributeError, 'Method %s is not implemented.' % name
         if not name in self._meta.fields:
             raise FieldMissingError(name)
         if name in self._memos:
@@ -1957,23 +2121,23 @@ class Record(object):
             raise
 
     def __getitem__(self, item):
-        if isinstance(item, (int, long)):
+        if isinstance(item, Integer):
             fields = self._meta.user_fields
             field_count = len(fields)
             if not -field_count <= item < field_count:
-                raise IndexError("Field offset %d is not in record" % item)
+                raise NotFoundError("Field offset %d is not in record" % item)
             field = fields[item]
             if field in self._memos:
                 return self._memos[field]
             return self[field]
         elif isinstance(item, slice):
             sequence = []
-            if isinstance(item.start, (str, unicode)) or isinstance(item.stop, (str, unicode)):
+            if isinstance(item.start, String) or isinstance(item.stop, String):
                 field_names = dbf.field_names(self)
                 start, stop, step = item.start, item.stop, item.step
                 if start not in field_names or stop not in field_names:
                     raise MissingFieldError("Either %r or %r (or both) are not valid field names" % (start, stop))
-                if step is not None and not isinstance(step, (int, long)):
+                if step is not None and not isinstance(step, Integer):
                     raise DbfError("step value must be an int or long, not %r" % type(step))
                 start = field_names.index(start)
                 stop = field_names.index(stop) + 1
@@ -1981,7 +2145,7 @@ class Record(object):
             for index in self._meta.fields[item]:
                 sequence.append(self[index])
             return sequence
-        elif isinstance(item, (str, unicode)):
+        elif isinstance(item, String):
             return self.__getattr__(item)
         else:
             raise TypeError("%r is not a field name" % item)
@@ -2023,18 +2187,18 @@ class Record(object):
             raise DbfError("%s not in read/write mode" % self._meta.filename)
         if self._write_to_disk:
             raise DbfError("unable to modify fields individually except in `with` or `Process()`")
-        if isinstance(name, (str, unicode)):
+        if isinstance(name, String):
             self.__setattr__(name, value)
-        elif isinstance(name, (int, long)):
+        elif isinstance(name, Integer):
             self.__setattr__(self._meta.fields[name], value)
         elif isinstance(name, slice):
             sequence = []
             field_names = dbf.field_names(self)
-            if isinstance(name.start, (str, unicode)) or isinstance(name.stop, (str, unicode)):
+            if isinstance(name.start, String) or isinstance(name.stop, String):
                 start, stop, step = name.start, name.stop, name.step
                 if start not in field_names or stop not in field_names:
                     raise MissingFieldError("Either %r or %r (or both) are not valid field names" % (start, stop))
-                if step is not None and not isinstance(step, (int, long)):
+                if step is not None and not isinstance(step, Integer):
                     raise DbfError("step value must be an int or long, not %r" % type(step))
                 start = field_names.index(start)
                 stop = field_names.index(stop) + 1
@@ -2058,7 +2222,9 @@ class Record(object):
         return self._data.tostring()
 
     def _commit_flux(self):
-        "stores field updates to disk; if any errors restores previous contents and propogates exception"
+        """
+        stores field updates to disk; if any errors restores previous contents and propogates exception
+        """
         if self._write_to_disk:
             raise DbfError("record not in flux")
         try:
@@ -2074,7 +2240,9 @@ class Record(object):
 
     @classmethod
     def _create_blank_data(cls, layout):
-        "creates a blank record data chunk"
+        """
+        creates a blank record data chunk
+        """
         record = object.__new__(cls)
         record._dirty = False
         record._recnum = -1
@@ -2105,7 +2273,9 @@ class Record(object):
         layout.record_sig = ('___'.join(signature), '___'.join(data_types))
 
     def _reindex_record(self):
-        "rerun all indices with this record"
+        """
+        rerun all indices with this record
+        """
         if self._meta.status == CLOSED:
             raise DbfError("%s is closed; cannot alter indices" % self._meta.filename)
         elif not self._write_to_disk:
@@ -2114,12 +2284,9 @@ class Record(object):
             dbfindex(self)
 
     def _retrieve_field_value(self, index, name):
-        """calls appropriate routine to convert value stored in field from array
-        @param record_data: the data portion of the record
-        @type record_data: array of characters
-        @param fielddef: description of the field definition
-        @type fielddef: dictionary with keys 'type', 'start', 'length', 'end', 'decimals', and 'flags'
-        @returns: python data stored in field"""
+        """
+        calls appropriate routine to convert value stored in field from array
+        """
         fielddef = self._meta[name]
         flags = fielddef[FLAGS]
         nullable = flags & NULLABLE
@@ -2147,7 +2314,9 @@ class Record(object):
         return datum
 
     def _rollback_flux(self):
-        "discards all changes since ._start_flux()"
+        """
+        discards all changes since ._start_flux()
+        """
         if self._write_to_disk:
             raise DbfError("record not in flux")
         self._data = self._old_data
@@ -2157,7 +2326,9 @@ class Record(object):
         self._write()
 
     def _start_flux(self):
-        "Allows record.field_name = ... and record[...] = ...; must use ._commit_flux() to commit changes"
+        """
+        Allows record.field_name = ... and record[...] = ...; must use ._commit_flux() to commit changes
+        """
         if self._meta.status == CLOSED:
             raise DbfError("%s is closed; cannot modify record" % self._meta.filename)
         elif self._recnum < 0:
@@ -2168,7 +2339,9 @@ class Record(object):
         self._write_to_disk = False
 
     def _update_field_value(self, index, name, value):
-        "calls appropriate routine to convert value to ascii bytes, and save it in record"
+        """
+        calls appropriate routine to convert value to ascii bytes, and save it in record
+        """
         fielddef = self._meta[name]
         field_type = fielddef[TYPE]
         flags = fielddef[FLAGS]
@@ -2228,8 +2401,8 @@ class RecordTemplate(object):
     """
     Provides routines to mimic a dbf record.
     """
-    __slots__ = ('_meta', '_data', '_old_data', '_memos', '_write_to_disk',
-                 '__weakref__')
+
+    __slots__ = ('_meta', '_data', '_old_data', '_memos', '_write_to_disk', '__weakref__')
 
     def _commit_flux(self):
         """
@@ -2246,13 +2419,6 @@ class RecordTemplate(object):
         """
         Calls appropriate routine to convert value stored in field from
         array
-
-        @param record_data: the data portion of the record
-        @type record_data: array of characters
-        @param fielddef: description of the field definition
-        @type fielddef: dictionary with keys 'type', 'start', 'length',
-                        'end', 'decimals', and 'flags'
-        @returns: python data stored in field
         """
         fielddef = self._meta[name]
         flags = fielddef[FLAGS]
@@ -2271,7 +2437,9 @@ class RecordTemplate(object):
         return datum
 
     def _rollback_flux(self):
-        "discards all changes since ._start_flux()"
+        """
+        discards all changes since ._start_flux()
+        """
         if self._write_to_disk:
             raise DbfError("template not in flux")
         self._data = self._old_data
@@ -2280,14 +2448,18 @@ class RecordTemplate(object):
         self._write_to_disk = True
 
     def _start_flux(self):
-        "Allows record.field_name = ... and record[...] = ...; must use ._commit_flux() to commit changes"
+        """
+        Allows record.field_name = ... and record[...] = ...; must use ._commit_flux() to commit changes
+        """
         if not self._write_to_disk:
             raise DbfError("template already in a state of flux")
         self._old_data = self._data[:]
         self._write_to_disk = False
 
     def _update_field_value(self, index, name, value):
-        "calls appropriate routine to convert value to ascii bytes, and save it in record"
+        """
+        calls appropriate routine to convert value to ascii bytes, and save it in record
+        """
         fielddef = self._meta[name]
         field_type = fielddef[TYPE]
         flags = fielddef[FLAGS]
@@ -2318,7 +2490,9 @@ class RecordTemplate(object):
             self._data[start:end] = blank[:]
 
     def __new__(cls, layout, original_record=None, defaults=None):
-        """record = ascii array of entire record; layout=record specification"""
+        """
+        record = ascii array of entire record; layout=record specification
+        """
         sig = layout.record_sig
         if sig not in _Template_Records:
             table = layout.table()
@@ -2367,7 +2541,7 @@ class RecordTemplate(object):
                 s_value, o_value = self[field], other[field]
                 if s_value is not o_value and s_value != o_value:
                     return False
-        else:  # tuple
+        else: # tuple
             if len(self) != len(other):
                 return False
             for s_value, o_value in zip(self, other):
@@ -2380,7 +2554,7 @@ class RecordTemplate(object):
 
     def __getattr__(self, name):
         if name[0:2] == '__' and name[-2:] == '__':
-            raise AttributeError('Method %s is not implemented.' % name)
+            raise AttributeError, 'Method %s is not implemented.' % name
         if not name in self._meta.fields:
             raise FieldMissingError(name)
         if name in self._memos:
@@ -2394,30 +2568,30 @@ class RecordTemplate(object):
             raise
 
     def __getitem__(self, item):
-        if isinstance(item, (int, long)):
-            fields = self._meta.user_fields
+        fields = self._meta.user_fields
+        if isinstance(item, Integer):
             field_count = len(fields)
             if not -field_count <= item < field_count:
-                raise IndexError("Field offset %d is not in record" % item)
+                raise NotFoundError("Field offset %d is not in record" % item)
             field = fields[item]
             if field in self._memos:
                 return self._memos[field]
             return self[field]
         elif isinstance(item, slice):
             sequence = []
-            if isinstance(item.start, (str, unicode)) or isinstance(item.stop, (str, unicode)):
+            if isinstance(item.start, String) or isinstance(item.stop, String):
                 start, stop, step = item.start, item.stop, item.step
-                if start not in yo.field_names or stop not in yo.field_names:
+                if start not in fields or stop not in fields:
                     raise MissingFieldError("Either %r or %r (or both) are not valid field names" % (start, stop))
-                if step is not None and not isinstance(step, (int, long)):
+                if step is not None and not isinstance(step, Integer):
                     raise DbfError("step value must be an int or long, not %r" % type(step))
-                start = yo.field_names.index(start)
-                stop = yo.field_names.index(stop) + 1
+                start = fields.index(start)
+                stop = fields.index(stop) + 1
                 item = slice(start, stop, step)
             for index in self._meta.fields[item]:
                 sequence.append(self[index])
             return sequence
-        elif isinstance(item, (str, unicode)):
+        elif isinstance(item, String):
             return self.__getattr__(item)
         else:
             raise TypeError("%r is not a field name" % item)
@@ -2451,9 +2625,9 @@ class RecordTemplate(object):
             raise err_cls(message, data)
 
     def __setitem__(self, name, value):
-        if isinstance(name, (str, unicode)):
+        if isinstance(name, String):
             self.__setattr__(name, value)
-        elif isinstance(name, (int, long)):
+        elif isinstance(name, Integer):
             self.__setattr__(self._meta.fields[name], value)
         elif isinstance(name, slice):
             sequence = []
@@ -2480,6 +2654,7 @@ class RecordVaporWare(object):
     """
     Provides routines to mimic a dbf record, but all values are non-existent.
     """
+
     __slots__ = ('_recno', '_sequence')
 
     def __new__(cls, position, sequence):
@@ -2503,6 +2678,7 @@ class RecordVaporWare(object):
             return NotImplemented
         return False
 
+
     def __getattr__(self, name):
         if name[0:2] == '__' and name[-2:] == '__':
             raise AttributeError('Method %s is not implemented.' % name)
@@ -2510,11 +2686,11 @@ class RecordVaporWare(object):
             return Vapor
 
     def __getitem__(self, item):
-        if isinstance(item, (int, long)):
+        if isinstance(item, Integer):
             return Vapor
         elif isinstance(item, slice):
             raise TypeError('slice notation not allowed on Vapor records')
-        elif isinstance(item, (str, unicode)):
+        elif isinstance(item, String):
             return self.__getattr__(item)
         else:
             raise TypeError("%r is not a field name" % item)
@@ -2528,7 +2704,9 @@ class RecordVaporWare(object):
         return True
 
     def __nonzero__(self):
-        "Vapor records are always False"
+        """
+        Vapor records are always False
+        """
         return False
 
     def __setattr__(self, name, value):
@@ -2538,7 +2716,7 @@ class RecordVaporWare(object):
         raise TypeError("cannot change Vapor record")
 
     def __setitem__(self, name, value):
-        if isinstance(name, (str, unicode, int, long)):
+        if isinstance(name, (String + Integer)):
             raise TypeError("cannot change Vapor record")
         elif isinstance(name, slice):
             raise TypeError("slice notation not allowed on Vapor records")
@@ -2562,20 +2740,24 @@ class RecordVaporWare(object):
 class _DbfMemo(object):
     """
     Provides access to memo fields as dictionaries
-    Must override _init, _get_memo, and _put_memo to store memo contents
-     to disk
+    Must override _init, _get_memo, and _put_memo to
+    store memo contents to disk
     """
+
     def _init(self):
-        """initialize disk file usage"""
-        raise NotImplementedError('Subclasses of _DbfMemo must overide _init')
+        """
+        Initialize disk file usage
+        """
 
     def _get_memo(self, block):
-        """retrieve memo contents from disk"""
-        raise NotImplementedError('Subclasses of _DbfMemo must overide _get_memo')
+        """
+        Retrieve memo contents from disk
+        """
 
     def _put_memo(self, data):
-        """store memo contents to disk"""
-        raise NotImplementedError('Subclasses of _DbfMemo must overide _put_memo')
+        """
+        Store memo contents to disk
+        """
 
     def _zap(self):
         """
@@ -2585,7 +2767,6 @@ class _DbfMemo(object):
         self.nextmemo = 1
 
     def __init__(self, meta):
-        ""
         self.meta = meta
         self.memory = {}
         self.nextmemo = 1
@@ -2593,7 +2774,9 @@ class _DbfMemo(object):
         self.meta.newmemofile = False
 
     def get_memo(self, block):
-        """gets the memo in block"""
+        """
+        Gets the memo in block
+        """
         if self.meta.ignorememos or not block:
             return ''
         if self.meta.location == ON_DISK:
@@ -2602,7 +2785,9 @@ class _DbfMemo(object):
             return self.memory[block]
 
     def put_memo(self, data):
-        """stores data in memo file, returns block number"""
+        """
+        Stores data in memo file, returns block number
+        """
         if self.meta.ignorememos or data == '':
             return 0
         if self.meta.location == IN_MEMORY:
@@ -2616,10 +2801,11 @@ class _DbfMemo(object):
 
 class _Db3Memo(_DbfMemo):
     """
-    Dbase III Memo record
+    dBase III specific
     """
+
     def _init(self):
-        self.meta.memo_size = 512
+        self.meta.memo_size= 512
         self.record_header_length = 2
         if self.meta.location == ON_DISK and not self.meta.ignorememos:
             if self.meta.newmemofile:
@@ -2681,11 +2867,11 @@ class _Db3Memo(_DbfMemo):
             mfd.write(pack_long_int(1) + '\x00' * 508)
             mfd.flush()
 
-
 class _VfpMemo(_DbfMemo):
     """
-    Visual Foxpro 6 Memo record
+    Visual Foxpro 6 specific
     """
+
     def _init(self):
         if self.meta.location == ON_DISK and not self.meta.ignorememos:
             self.record_header_length = 8
@@ -2746,8 +2932,9 @@ class _VfpMemo(_DbfMemo):
 
 
 class DbfCsv(csv.Dialect):
-    """"
-    CSV dialect for exporting dbf to CSV"""
+    """
+    csv format for exporting tables
+    """
     delimiter = ','
     doublequote = True
     escapechar = None
@@ -2759,15 +2946,19 @@ csv.register_dialect('dbf', DbfCsv)
 
 
 class _DeadObject(object):
-    """used because you cannot weakref None"""
+    """
+    used because you cannot weakref None
+    """
+
     def __nonzero__(self):
         return False
+
 _DeadObject = _DeadObject()
 
 
 # Routines for saving, retrieving, and creating fields
-VFPTIME = 1721425
 
+VFPTIME = 1721425
 
 def pack_short_int(value, bigendian=False):
     """
@@ -2781,7 +2972,6 @@ def pack_short_int(value, bigendian=False):
     else:
         return struct.pack('<H', value)
 
-
 def pack_long_int(value, bigendian=False):
     """
     Returns a four-bye integer from the value, or raises DbfError
@@ -2794,17 +2984,14 @@ def pack_long_int(value, bigendian=False):
     else:
         return struct.pack('<L', value)
 
-
 def pack_str(string):
     """
-    Returns an 11 byte, upper-cased, null padded string suitable
-    for field names.
-    Raises `DbfError` if the string is bigger than 10 bytes
+    Returns an 11 byte, upper-cased, null padded string suitable for field names;
+    raises DbfError if the string is bigger than 10 bytes
     """
     if len(string) > 10:
         raise DbfError("Maximum string size is ten characters -- %s has %d characters" % (string, len(string)))
     return struct.pack('11s', string.upper())
-
 
 def unpack_short_int(bytes, bigendian=False):
     """
@@ -2815,7 +3002,6 @@ def unpack_short_int(bytes, bigendian=False):
     else:
         return struct.unpack('<H', bytes)[0]
 
-
 def unpack_long_int(bytes, bigendian=False):
     """
     Returns the value in the four-byte integer passed in
@@ -2825,11 +3011,9 @@ def unpack_long_int(bytes, bigendian=False):
     else:
         return int(struct.unpack('<L', bytes)[0])
 
-
 def unpack_str(chars):
     """
-    Returns a normal, lower-cased string from a null-padded byte
-    string
+    Returns a normal, lower-cased string from a null-padded byte string
     """
     field = struct.unpack('%ds' % len(chars), chars)[0]
     name = []
@@ -2839,13 +3023,11 @@ def unpack_str(chars):
         name.append(ch.lower())
     return ''.join(name)
 
-
 def unsupported_type(something, *ignore):
     """
-    Called if a data type is not supported for that style of table
+    called if a data type is not supported for that style of table
     """
     return something
-
 
 def retrieve_character(bytes, fielddef, memo, decoder):
     """
@@ -2861,11 +3043,9 @@ def retrieve_character(bytes, fielddef, memo, decoder):
         return data
     return fielddef[CLASS](decoder(data)[0])
 
-
 def update_character(string, fielddef, memo, decoder, encoder):
     """
-    Returns the string as bytes (not unicode)
-    as fielddef[CLASS] or fielddef[EMPTY]
+    returns the string as bytes (not unicode) as fielddef[CLASS] or fielddef[EMPTY]
     """
     length = fielddef[LENGTH]
     if string == None:
@@ -2885,14 +3065,12 @@ def update_character(string, fielddef, memo, decoder, encoder):
             string = string[:length]
         return string
 
-
 def retrieve_currency(bytes, fielddef, *ignore):
     """
     Returns the currency value in bytes
     """
     value = struct.unpack('<q', bytes)[0]
     return fielddef[CLASS](("%de-4" % value).strip())
-
 
 def update_currency(value, *ignore):
     """
@@ -2904,7 +3082,6 @@ def update_currency(value, *ignore):
     if not -9223372036854775808 < currency < 9223372036854775808:
         raise DataOverflowError("value %s is out of bounds" % value)
     return struct.pack('<q', currency)
-
 
 def retrieve_date(bytes, fielddef, *ignore):
     """
@@ -2921,7 +3098,6 @@ def retrieve_date(bytes, fielddef, *ignore):
     day = int(text[6:8])
     return fielddef[CLASS](year, month, day)
 
-
 def update_date(moment, *ignore):
     """
     Returns the Date or datetime.date object ascii-encoded (yyyymmdd)
@@ -2929,7 +3105,6 @@ def update_date(moment, *ignore):
     if moment == None:
         return '        '
     return "%04d%02d%02d" % moment.timetuple()[:3]
-
 
 def retrieve_double(bytes, fielddef, *ignore):
     """
@@ -2940,25 +3115,23 @@ def retrieve_double(bytes, fielddef, *ignore):
         typ = float
     return typ(struct.unpack('<d', bytes)[0])
 
-
 def update_double(value, *ignore):
     """
-    Returns the value to be stored in the record's disk data
+    returns the value to be stored in the record's disk data
     """
     if value == None:
         value = 0
     return struct.pack('<d', float(value))
 
-
 def retrieve_integer(bytes, fielddef, *ignore):
     """
-    Returns the binary number stored in bytes in little-endian format as
-    fielddef[CLASS]"""
+    Returns the binary number stored in bytes in little-endian
+    format as fielddef[CLASS]
+    """
     typ = fielddef[CLASS]
     if typ == 'default':
         typ = int
     return typ(struct.unpack('<i', bytes)[0])
-
 
 def update_integer(value, *ignore):
     """
@@ -2974,11 +3147,11 @@ def update_integer(value, *ignore):
         raise DataOverflowError("Integer size exceeded.  Possible: -2,147,483,648..+2,147,483,647.  Attempted: %d" % value)
     return struct.pack('<i', int(value))
 
-
 def retrieve_logical(bytes, fielddef, *ignore):
     """
-    Returns True if bytes is 't', 'T', 'y', or 'Y', None if '?',
-    else returns False
+    Returns True if bytes is 't', 'T', 'y', or 'Y'
+    None if '?'
+    False otherwise
     """
     cls = fielddef[CLASS]
     empty = fielddef[EMPTY]
@@ -2997,7 +3170,6 @@ def retrieve_logical(bytes, fielddef, *ignore):
         raise BadDataError('Logical field contained %r' % bytes)
     return typ(bytes)
 
-
 def update_logical(data, *ignore):
     """
     Returns 'T' if logical is True, 'F' if False, '?' otherwise
@@ -3010,16 +3182,12 @@ def update_logical(data, *ignore):
         return 'F'
     raise ValueError("unable to automatically coerce %r to Logical" % data)
 
-
 def retrieve_memo(bytes, fielddef, memo, decoder):
     """
     Returns the block of data from a memo file
     """
-    if memo is None:
-        return "(Memo Ignored)"
-
     stringval = bytes.tostring().strip()
-    if not stringval:
+    if not stringval or memo is None:
         cls = fielddef[EMPTY]
         if cls is NoneType:
             return None
@@ -3030,11 +3198,12 @@ def retrieve_memo(bytes, fielddef, memo, decoder):
         return data
     return fielddef[CLASS](decoder(data)[0])
 
-
 def update_memo(string, fielddef, memo, decoder, encoder):
     """
     Writes string as a memo, returns the block number it was saved into
     """
+    if memo is None:
+        raise DbfError('Memos are being ignored, unable to update')
     if string == None:
         string = ''
     if fielddef[FLAGS] & BINARY:
@@ -3051,7 +3220,6 @@ def update_memo(string, fielddef, memo, decoder, encoder):
     if block == 0:
         block = ''
     return "%*s" % (fielddef[LENGTH], block)
-
 
 def retrieve_numeric(bytes, fielddef, *ignore):
     """
@@ -3073,11 +3241,10 @@ def retrieve_numeric(bytes, fielddef, *ignore):
     else:
         return cls(string.strip())
 
-
 def update_numeric(value, fielddef, *ignore):
     """
-    Returns value as ascii representation, rounding decimal portion as
-    necessary
+    returns value as ascii representation, rounding decimal
+    portion as necessary
     """
     if value == None:
         return fielddef[LENGTH] * ' '
@@ -3094,10 +3261,9 @@ def update_numeric(value, fielddef, *ignore):
         raise DataOverflowError('Integer portion too big')
     return "%*.*f" % (fielddef[LENGTH], fielddef[DECIMALS], value)
 
-
 def retrieve_vfp_datetime(bytes, fielddef, *ignore):
     """
-    Returns the date/time stored in bytes; dates <= 01/01/1981 00:00:00
+    returns the date/time stored in bytes; dates <= 01/01/1981 00:00:00
     may not be accurate;  BC dates are nulled.
     """
     # two four-byte integers store the date and time.
@@ -3121,11 +3287,9 @@ def retrieve_vfp_datetime(bytes, fielddef, *ignore):
     date = datetime.date.fromordinal(possible)
     return cls(date.year, date.month, date.day, time.hour, time.minute, time.second, time.microsecond)
 
-
 def update_vfp_datetime(moment, *ignore):
     """
     Sets the date/time stored in moment
-
     moment must have fields:
         year, month, day, hour, minute, second, microsecond
     """
@@ -3140,16 +3304,16 @@ def update_vfp_datetime(moment, *ignore):
         bytes[:4] = update_integer(moment.toordinal() + VFPTIME)
     return ''.join(bytes)
 
-
 def retrieve_vfp_memo(bytes, fielddef, memo, decoder):
-    """"
+    """
     Returns the block of data from a memo file
     """
     if memo is None:
-        return "(Memo Ignored)"
-    block = struct.unpack('<i', bytes)[0]
+        block = 0
+    else:
+        block = struct.unpack('<i', bytes)[0]
     if not block:
-        cls = fielddef[EMPTY]
+        cls =  fielddef[EMPTY]
         if cls is NoneType:
             return None
         return cls()
@@ -3158,11 +3322,12 @@ def retrieve_vfp_memo(bytes, fielddef, memo, decoder):
         return data
     return fielddef[CLASS](decoder(data)[0])
 
-
 def update_vfp_memo(string, fielddef, memo, decoder, encoder):
     """
     Writes string as a memo, returns the block number it was saved into
     """
+    if memo is None:
+        raise DbfError('Memos are being ignored, unable to update')
     if string == None:
         string = ''
     if fielddef[FLAGS] & BINARY:
@@ -3178,23 +3343,21 @@ def update_vfp_memo(string, fielddef, memo, decoder, encoder):
     block = memo.put_memo(string)
     return struct.pack('<i', block)
 
-
 def add_character(format, flags):
     if format[0][0] != '(' or format[0][-1] != ')' or any([f not in flags for f in format[1:]]):
-        raise InvalidFieldSpecError("Format for Character field creation is 'C(n)%s', not 'C%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Character field creation is 'C(n)%s', not 'C%s'" % field_spec_error_text(format, flags))
     length = int(format[0][1:-1])
-    if not 0 < length < 255:
-        raise InvalidFieldSpecError("Character fields must be between 1 and 255")
+    if not 0 < length < 256:
+        raise FieldSpecError("Character fields must be between 1 and 255, not %d" % length)
     decimals = 0
     flag = 0
     for f in format[1:]:
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
 
-
 def add_date(format, flags):
     if any([f not in flags for f in format]):
-        raise InvalidFieldSpecError("Format for Date field creation is 'D%s', not 'D%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Date field creation is 'D%s', not 'D%s'" % field_spec_error_text(format, flags))
     length = 8
     decimals = 0
     flag = 0
@@ -3202,10 +3365,9 @@ def add_date(format, flags):
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
 
-
 def add_logical(format, flags):
     if any([f not in flags for f in format]):
-        raise InvalidFieldSpecError("Format for Logical field creation is 'L%s', not 'L%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Logical field creation is 'L%s', not 'L%s'" % field_spec_error_text(format, flags))
     length = 1
     decimals = 0
     flag = 0
@@ -3213,10 +3375,9 @@ def add_logical(format, flags):
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
 
-
 def add_memo(format, flags):
     if any(f not in flags for f in format):
-        raise InvalidFieldSpecError("Format for Memo field creation is 'M(n)%s', not 'M%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Memo field creation is 'M(n)%s', not 'M%s'" % field_spec_error_text(format, flags))
     length = 10
     decimals = 0
     flag = 0
@@ -3224,10 +3385,9 @@ def add_memo(format, flags):
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
 
-
 def add_numeric(format, flags):
     if len(format) > 1 or format[0][0] != '(' or format[0][-1] != ')' or any(f not in flags for f in format[1:]):
-        raise InvalidFieldSpecError("Format for Numeric field creation is 'N(s,d)%s', not 'N%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Numeric field creation is 'N(s,d)%s', not 'N%s'" % field_spec_error_text(format, flags))
     length, decimals = format[0][1:-1].split(',')
     length = int(length)
     decimals = int(decimals)
@@ -3235,63 +3395,58 @@ def add_numeric(format, flags):
     for f in format[1:]:
         flag |= FIELD_FLAGS[f]
     if not 0 < length < 18:
-        raise InvalidFieldSpecError("Numeric fields must be between 1 and 17 digits, not %d" % length)
+        raise FieldSpecError("Numeric fields must be between 1 and 17 digits, not %d" % length)
     if decimals and not 0 < decimals <= length - 2:
-        raise InvalidFieldSpecError("Decimals must be between 0 and Length-2 (Length: %d, Decimals: %d)" % (length, decimals))
+        raise FieldSpecError("Decimals must be between 0 and Length-2 (Length: %d, Decimals: %d)" % (length, decimals))
     return length, decimals, flag
-
 
 def add_clp_character(format, flags):
     if format[0][0] != '(' or format[0][-1] != ')' or any([f not in flags for f in format[1:]]):
-        raise InvalidFieldSpecError("Format for Character field creation is 'C(n)%s', not 'C%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Character field creation is 'C(n)%s', not 'C%s'" % field_spec_error_text(format, flags))
     length = int(format[0][1:-1])
     if not 0 < length < 65519:
-        raise InvalidFieldSpecError("Character fields must be between 1 and 65,519")
+        raise FieldSpecError("Character fields must be between 1 and 65,519")
     decimals = 0
     flag = 0
     for f in format[1:]:
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
-
 
 def add_vfp_character(format, flags):
     if format[0][0] != '(' or format[0][-1] != ')' or any([f not in flags for f in format[1:]]):
-        raise InvalidFieldSpecError("Format for Character field creation is 'C(n)%s', not 'C%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Character field creation is 'C(n)%s', not 'C%s'" % field_spec_error_text(format, flags))
     length = int(format[0][1:-1])
     if not 0 < length < 255:
-        raise InvalidFieldSpecError("Character fields must be between 1 and 255")
+        raise FieldSpecError("Character fields must be between 1 and 255")
     decimals = 0
     flag = 0
     for f in format[1:]:
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
 
-
 def add_vfp_currency(format, flags):
     if any(f not in flags for f in format[1:]):
-        raise InvalidFieldSpecError("Format for Currency field creation is 'Y%s', not 'Y%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Currency field creation is 'Y%s', not 'Y%s'" % field_spec_error_text(format, flags))
     length = 8
     decimals = 0
     flag = 0
     for f in format:
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
-
 
 def add_vfp_datetime(format, flags):
     if any(f not in flags for f in format[1:]):
-        raise InvalidFieldSpecError("Format for DateTime field creation is 'T%s', not 'T%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for DateTime field creation is 'T%s', not 'T%s'" % field_spec_error_text(format, flags))
     length = 8
     decimals = 0
     flag = 0
     for f in format:
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
-
 
 def add_vfp_double(format, flags):
     if any(f not in flags for f in format[1:]):
-        raise InvalidFieldSpecError("Format for Double field creation is 'B%s', not 'B%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Double field creation is 'B%s', not 'B%s'" % field_spec_error_text(format, flags))
     length = 8
     decimals = 0
     flag = 0
@@ -3299,10 +3454,9 @@ def add_vfp_double(format, flags):
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
 
-
 def add_vfp_integer(format, flags):
     if any(f not in flags for f in format[1:]):
-        raise InvalidFieldSpecError("Format for Integer field creation is 'I%s', not 'I%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Integer field creation is 'I%s', not 'I%s'" % field_spec_error_text(format, flags))
     length = 4
     decimals = 0
     flag = 0
@@ -3310,10 +3464,9 @@ def add_vfp_integer(format, flags):
         flag |= FIELD_FLAGS[f]
     return length, decimals, flag
 
-
 def add_vfp_memo(format, flags):
     if any(f not in flags for f in format[1:]):
-        raise InvalidFieldSpecError("Format for Memo field creation is 'M%s', not 'M%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Memo field creation is 'M%s', not 'M%s'" % field_spec_error_text(format, flags))
     length = 4
     decimals = 0
     flag = 0
@@ -3323,10 +3476,9 @@ def add_vfp_memo(format, flags):
         flag |= FIELD_FLAGS['binary']
     return length, decimals, flag
 
-
 def add_vfp_numeric(format, flags):
     if format[0][0] != '(' or format[0][-1] != ')' or any(f not in flags for f in format[1:]):
-        raise InvalidFieldSpecError("Format for Numeric field creation is 'N(s,d)%s', not 'N%s'" % field_spec_error_text(format, flags))
+        raise FieldSpecError("Format for Numeric field creation is 'N(s,d)%s', not 'N%s'" % field_spec_error_text(format, flags))
     length, decimals = format[0][1:-1].split(',')
     length = int(length)
     decimals = int(decimals)
@@ -3334,15 +3486,14 @@ def add_vfp_numeric(format, flags):
     for f in format[1:]:
         flag |= FIELD_FLAGS[f]
     if not 0 < length < 21:
-        raise InvalidFieldSpecError("Numeric fields must be between 1 and 20 digits, not %d" % length)
+        raise FieldSpecError("Numeric fields must be between 1 and 20 digits, not %d" % length)
     if decimals and not 0 < decimals <= length - 2:
-        raise InvalidFieldSpecError("Decimals must be between 0 and Length-2 (Length: %d, Decimals: %d)" % (length, decimals))
+        raise FieldSpecError("Decimals must be between 0 and Length-2 (Length: %d, Decimals: %d)" % (length, decimals))
     return length, decimals, flag
-
 
 def field_spec_error_text(format, flags):
     """
-    Generic routine for error text for the add...() functions
+    generic routine for error text for the add...() functions
     """
     flg = ''
     if flags:
@@ -3352,10 +3503,9 @@ def field_spec_error_text(format, flags):
         frmt = ' ' + ' '.join(format)
     return flg, frmt
 
-
 def ezip(*iters):
     """
-    Extends all iters to longest one, using last value from each as necessary
+    extends all iters to longest one, using last value from each as necessary
     """
     iters = [iter(x) for x in iters]
     last = [None] * len(iters)
@@ -3375,6 +3525,33 @@ def ezip(*iters):
 
 
 # Public classes
+
+class Tables(object):
+    """
+    context manager for multiple tables
+    """
+    def __init__(yo, *tables):
+        if len(tables) == 1 and not isinstance(tables[0], (Table, str, unicode)):
+            tables = tables[0]
+        yo._tables = []
+        yo._entered = []
+        for table in tables:
+            if isinstance(table, String):
+                table = Table(table)
+            yo._tables.append(table)
+    def __enter__(yo):
+        for table in yo._tables:
+            table.__enter__()
+            yo._entered.append(table)
+        return tuple(yo._tables)
+    def __exit__(yo, *args):
+        while yo._entered:
+            table = yo._entered.pop()
+            try:
+                table.__exit__()
+            except Exception:
+                pass
+
 class IndexLocation(long):
     """
     Represents the index where the match criteria is if True,
@@ -3382,6 +3559,7 @@ class IndexLocation(long):
 
     Used by Index.index_search
     """
+
     def __new__(cls, value, found):
         "value is the number, found is True/False"
         result = long.__new__(cls, value)
@@ -3394,10 +3572,11 @@ class IndexLocation(long):
 
 class FieldInfo(tuple):
     """
-    Tuple with named attributes for representing a field's dbf type,
+    tuple with named attributes for representing a field's dbf type,
     length, decimal portion, and python class
     """
-    __slots__ = ()
+
+    __slots__= ()
 
     def __new__(cls, *args):
         if len(args) != 4:
@@ -3423,9 +3602,10 @@ class FieldInfo(tuple):
 
 class CodePage(tuple):
     """
-    Tuple with named attributes for representing a tables codepage
+    tuple with named attributes for representing a tables codepage
     """
-    __slots__ = ()
+
+    __slots__= ()
 
     def __new__(cls, name):
         "call with name of codepage (e.g. 'cp1252')"
@@ -3455,6 +3635,7 @@ class Iter(_Navigation):
     """
     Provides iterable behavior for a table
     """
+
     def __init__(self, table, include_vapor=False):
         """
         Return a Vapor record as the last record in the iteration
@@ -3488,6 +3669,7 @@ class Table(_Navigation):
     """
     Base class for dbf style tables
     """
+
     _version = 'basic memory table'
     _versionabbr = 'dbf'
     _max_fields = 255
@@ -3496,31 +3678,32 @@ class Table(_Navigation):
     @MutableDefault
     def _field_types():
         return {
-                'C': {
-                        'Type': 'Character', 'Init': add_character, 'Blank': lambda x: ' ' * x, 'Retrieve': retrieve_character, 'Update': update_character,
-                        'Class': unicode, 'Empty': unicode, 'flags': tuple(),
+                'C' : {
+                        'Type':'Character', 'Init':add_character, 'Blank':lambda x: ' ' * x, 'Retrieve':retrieve_character, 'Update':update_character,
+                        'Class':unicode, 'Empty':unicode, 'flags':tuple(),
                         },
-                'D': {
-                        'Type': 'Date', 'Init': add_date, 'Blank': lambda x: '        ', 'Retrieve': retrieve_date, 'Update': update_date,
-                        'Class': datetime.date, 'Empty': none, 'flags': tuple(),
+                'D' : {
+                        'Type':'Date', 'Init':add_date, 'Blank':lambda x: '        ', 'Retrieve':retrieve_date, 'Update':update_date,
+                        'Class':datetime.date, 'Empty':none, 'flags':tuple(),
                         },
-                'F': {
-                        'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_numeric,
-                        'Class': 'default', 'Empty': none, 'flags': tuple(),
+                'F' : {
+                        'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_numeric,
+                        'Class':'default', 'Empty':none, 'flags':tuple(),
                         },
-                'L': {
-                        'Type': 'Logical', 'Init': add_logical, 'Blank': lambda x: '?', 'Retrieve': retrieve_logical, 'Update': update_logical,
-                        'Class': bool, 'Empty': none, 'flags': tuple(),
+                'L' : {
+                        'Type':'Logical', 'Init':add_logical, 'Blank':lambda x: '?', 'Retrieve':retrieve_logical, 'Update':update_logical,
+                        'Class':bool, 'Empty':none, 'flags':tuple(),
                         },
-                'M': {
-                        'Type': 'Memo', 'Init': add_memo, 'Blank': lambda x: '          ', 'Retrieve': retrieve_memo, 'Update': update_memo,
-                        'Class': unicode, 'Empty': unicode, 'flags': tuple(),
+                'M' : {
+                        'Type':'Memo', 'Init':add_memo, 'Blank':lambda x: '          ', 'Retrieve':retrieve_memo, 'Update':update_memo,
+                        'Class':unicode, 'Empty':unicode, 'flags':tuple(),
                         },
-                'N': {
-                        'Type': 'Numeric', 'Init': add_numeric, 'Blank': lambda x: ' ' * x, 'Retrieve': retrieve_numeric, 'Update': update_numeric,
-                        'Class': 'default', 'Empty': none, 'flags': tuple(),
+                'N' : {
+                        'Type':'Numeric', 'Init':add_numeric, 'Blank':lambda x: ' ' * x, 'Retrieve':retrieve_numeric, 'Update':update_numeric,
+                        'Class':'default', 'Empty':none, 'flags':tuple(),
                         },
                 }
+
     _memoext = ''
     _memoClass = _DbfMemo
     _yesMemoMask = ''
@@ -3532,8 +3715,8 @@ class Table(_Navigation):
     _datetime_types = tuple()              # dates w/times
     _decimal_types = ('N', 'F')            # text-based numeric fields
     _fixed_types = ('M', 'D', 'L')           # always same length in table
-    _logical_types = ('L',)               # logicals
-    _memo_types = tuple('M',)
+    _logical_types = ('L', )               # logicals
+    _memo_types = tuple('M', )
     _numeric_types = ('N', 'F')            # fields representing a number
     _variable_types = ('C', 'N', 'F')      # variable length in table
     _dbfTableHeader = array('c', '\x00' * 32)
@@ -3547,11 +3730,11 @@ class Table(_Navigation):
     _pack_count = 0
     backup = None
 
-
     class _Indexen(object):
         """
-        Implements the weakref structure for separate indexes
+        implements the weakref structure for seperate indexes
         """
+
         def __init__(self):
             self._indexen = set()
 
@@ -3566,7 +3749,6 @@ class Table(_Navigation):
         def add(self, new_index):
             self._indexen.add(weakref.ref(new_index))
             self._indexen = set([s for s in self._indexen if s() is not None])
-
 
     class _MetaData(dict):
         """
@@ -3588,11 +3770,11 @@ class Table(_Navigation):
         user_fields = None      # not counting SYSTEM fields
         user_field_count = 0    # also not counting SYSTEM fields
 
-
     class _TableHeader(object):
         """
-        Represents the data block that defines a tables type and layout
+        represents the data block that defines a tables type and layout
         """
+
         def __init__(self, data, pack_date, unpack_date):
             if len(data) != 32:
                 raise BadDataError('table header should be 32 bytes, but is %d bytes' % len(data))
@@ -3602,7 +3784,7 @@ class Table(_Navigation):
 
         def codepage(self, cp=None):
             """
-            Get/set code page of table
+            get/set code page of table
             """
             if cp is None:
                 return self._data[29]
@@ -3614,7 +3796,7 @@ class Table(_Navigation):
         @property
         def data(self):
             """
-            Main data structure
+            main data structure
             """
             date = self.packDate(Date.today())
             self._data[1:4] = array('c', date)
@@ -3628,9 +3810,7 @@ class Table(_Navigation):
 
         @property
         def extra(self):
-            """
-            extra dbf info (located after headers, before data records)
-            """
+            "extra dbf info (located after headers, before data records)"
             fieldblock = self._data[32:]
             for i in range(len(fieldblock) // 32 + 1):
                 cr = i * 32
@@ -3656,9 +3836,7 @@ class Table(_Navigation):
 
         @property
         def field_count(self):
-            """
-            Returns the number of fields (read-only)
-            """
+            "number of fields (read-only)"
             fieldblock = self._data[32:]
             for i in range(len(fieldblock) // 32 + 1):
                 cr = i * 32
@@ -3671,7 +3849,7 @@ class Table(_Navigation):
         @property
         def fields(self):
             """
-            Field block structure
+            field block structure
             """
             fieldblock = self._data[32:]
             for i in range(len(fieldblock) // 32 + 1):
@@ -3700,13 +3878,13 @@ class Table(_Navigation):
             fieldlen = fieldlen // 32
             recordlen = 1                                     # deleted flag
             for i in range(fieldlen):
-                recordlen += ord(block[i * 32 + 16])
+                recordlen += ord(block[i*32+16])
             self._data[10:12] = array('c', pack_short_int(recordlen))
 
         @property
         def record_count(self):
             """
-            Number of records (maximum 16,777,215)
+            number of records (maximum 16,777,215)
             """
             return unpack_long_int(self._data[4:8].tostring())
 
@@ -3717,20 +3895,21 @@ class Table(_Navigation):
         @property
         def record_length(self):
             """
-            Length of a record (read_only) (max of 65,535)
+            length of a record (read_only) (max of 65,535)
             """
             return unpack_short_int(self._data[10:12].tostring())
 
         @record_length.setter
         def record_length(self, length):
-            "to support Clipper large Character fields"
+            """
+            to support Clipper large Character fields
+            """
             self._data[10:12] = array('c', pack_short_int(length))
 
         @property
         def start(self):
             """
-            Starting position of first record in file
-            (must be within first 64K)
+            starting position of first record in file (must be within first 64K)
             """
             return unpack_short_int(self._data[8:10].tostring())
 
@@ -3741,24 +3920,26 @@ class Table(_Navigation):
         @property
         def update(self):
             """
-            Date of last table modification (read-only)
+            date of last table modification (read-only)
             """
             return self.unpackDate(self._data[1:4].tostring())
 
         @property
         def version(self):
-            """dbf version"""
+            """
+            dbf version
+            """
             return self._data[0]
 
         @version.setter
         def version(self, ver):
             self._data[0] = ver
 
-
     class _Table(object):
         """
-        Implements the weakref table for records
+        implements the weakref table for records
         """
+
         def __init__(self, count, meta):
             self._meta = meta
             self._weakref_list = [weakref.ref(_DeadObject)] * count
@@ -3799,10 +3980,9 @@ class Table(_Navigation):
         def pop(self):
             return self._weakref_list.pop()
 
-
     def _build_header_fields(self):
         """
-        Constructs fieldblock for disk table
+        constructs fieldblock for disk table
         """
         fieldblock = array('c', '')
         memo = False
@@ -3870,20 +4050,19 @@ class Table(_Navigation):
 
     def _check_memo_integrity(self):
         """
-        Checks memo file for problems
+        checks memo file for problems
         """
         raise NotImplementedError("_check_memo_integrity must be implemented by subclass")
 
     def _initialize_fields(self):
         """
-        Builds the FieldList of names, types, and descriptions from the
-        disk file
+        builds the FieldList of names, types, and descriptions from the disk file
         """
         raise NotImplementedError("_initialize_fields must be implemented by subclass")
 
     def _field_layout(self, i):
         """
-        Returns field information Name Type(Length[,Decimals])
+        Returns field information Name Type(Length[, Decimals])
         """
         name = self._meta.fields[i]
         fielddef = self._meta[name]
@@ -3914,7 +4093,7 @@ class Table(_Navigation):
 
     def _list_fields(self, specs, sep=','):
         """
-        Standardizes field specs
+        standardizes field specs
         """
         if specs is None:
             specs = self.field_names
@@ -3950,7 +4129,7 @@ class Table(_Navigation):
 
     def _update_disk(self, headeronly=False):
         """
-        Synchronizes the disk file with current data
+        synchronizes the disk file with current data
         """
         if self._meta.location == IN_MEMORY:
             return
@@ -3973,7 +4152,7 @@ class Table(_Navigation):
 
     def __contains__(self, data):
         """
-        Data can be a record, template, dict, or tuple
+        data can be a record, template, dict, or tuple
         """
         if not isinstance(data, (Record, RecordTemplate, dict, tuple)):
             raise TypeError("x should be a record, template, dict, or tuple, not %r" % type(data))
@@ -3983,11 +4162,13 @@ class Table(_Navigation):
         return False
 
     def __enter__(self):
+        self._previous_status = self._meta.status
         self.open()
         return self
 
     def __exit__(self, *exc_info):
-        self.close()
+        if self._previous_status == CLOSED:
+            self.close()
 
     def __getattr__(self, name):
         if name in (
@@ -4003,7 +4184,7 @@ class Table(_Navigation):
                 'numeric_types',
                 'variable_types',
                 ):
-            return getattr(self, '_' + name)
+            return getattr(self, '_'+name)
         if name in ('_table'):
                 if self._meta.location == ON_DISK:
                     self._table = self._Table(len(self), self._meta)
@@ -4012,9 +4193,9 @@ class Table(_Navigation):
         return object.__getattribute__(self, name)
 
     def __getitem__(self, value):
-        if isinstance(value, (int, long)):
+        if isinstance(value, Integer):
             if not -self._meta.header.record_count <= value < self._meta.header.record_count:
-                raise IndexError("Record %d is not in table." % value)
+                raise NotFoundError("Record %d is not in table %s." % (value, self.filename))
             return self._table[value]
         elif type(value) == slice:
             sequence = List(desc='%s -->  %s' % (self.filename, value))
@@ -4030,8 +4211,7 @@ class Table(_Navigation):
                  dbf_type=None, on_disk=True,
                  ):
         """
-        Open/create dbf file.
-
+        open/create dbf file
         filename should include path if needed
         field_specs can be either a ;-delimited string or a list of strings
         memo_size is always 512 for db3 memos
@@ -4041,6 +4221,7 @@ class Table(_Navigation):
         meta_only will ignore all records, keeping only basic table information
         codepage will override whatever is set in the table itself
         """
+
         if not on_disk:
             if field_specs is None:
                 raise DbfError("field list must be specified for memory tables")
@@ -4085,8 +4266,8 @@ class Table(_Navigation):
             meta.header.data
         else:
             base, ext = os.path.splitext(filename)
-            if ext == '':
-                meta.filename = base + '.dbf'
+            if ext.lower() != '.dbf':
+                meta.filename =  filename + '.dbf'
             meta.memoname = base + self._memoext
             meta.location = ON_DISK
         if codepage is not None:
@@ -4161,11 +4342,15 @@ class Table(_Navigation):
         self.close()
 
     def __iter__(self):
-        """Iterates over the table's records"""
+        """
+        iterates over the table's records
+        """
         return Iter(self)
 
     def __len__(self):
-        """Returns number of records in table"""
+        """
+        returns number of records in table
+        """
         return self._meta.header.record_count
 
     def __new__(cls, filename, field_specs=None, memo_size=128, ignore_memos=False,
@@ -4183,6 +4368,9 @@ class Table(_Navigation):
                 raise DbfError("Unknown table type: %s" % dbf_type)
             return object.__new__(table)
         else:
+            base, ext = os.path.splitext(filename)
+            if ext.lower() != '.dbf':
+                filename =  filename + '.dbf'
             possibles = guess_table_type(filename)
             if len(possibles) == 1:
                 return object.__new__(possibles[0][2])
@@ -4196,7 +4384,9 @@ class Table(_Navigation):
                     raise DbfError("Table could be any of %s.  Please specify %s when opening" % (types, abbrs))
 
     def __nonzero__(self):
-        """True if table has any records"""
+        """
+        True if table has any records
+        """
         return self._meta.header.record_count != 0
 
     def __repr__(self):
@@ -4204,7 +4394,12 @@ class Table(_Navigation):
 
     def __str__(self):
         status = self._meta.status
-        str = """
+        version = version_map.get(self._meta.header.version)
+        if version is not None:
+            version = self._version
+        else:
+            version = 'unknown - ' + hex(ord(self._meta.header.version))
+        str =  """
         Table:         %s
         Type:          %s
         Codepage:      %s
@@ -4212,8 +4407,8 @@ class Table(_Navigation):
         Last updated:  %s
         Record count:  %d
         Field count:   %d
-        Record length: %d """ % (self.filename, version_map.get(self._meta.header.version,
-            'unknown - ' + hex(ord(self._meta.header.version))), self.codepage, status,
+        Record length: %d """ % (self.filename, version
+            , self.codepage, status, 
             self.last_update, len(self), self.field_count, self.record_length)
         str += "\n        --Fields--\n"
         for i in range(len(self.field_names)):
@@ -4223,7 +4418,7 @@ class Table(_Navigation):
     @property
     def codepage(self):
         """
-        Code page used for text translation
+        code page used for text translation
         """
         return CodePage(code_pages[self._meta.header.codepage()][0])
 
@@ -4241,57 +4436,72 @@ class Table(_Navigation):
 
     @property
     def field_count(self):
-        """The number of user fields in the table"""
+        """
+        the number of user fields in the table
+        """
         return self._meta.user_field_count
 
     @property
     def field_names(self):
-        """A list of the user fields in the table"""
+        """
+        a list of the user fields in the table
+        """
         return self._meta.user_fields[:]
 
     @property
     def filename(self):
-        """Table's file name, including path (if specified on open)"""
+        """
+        table's file name, including path (if specified on open)
+        """
         return self._meta.filename
 
     @property
     def last_update(self):
-        """Date of last update"""
+        """
+        date of last update
+        """
         return self._meta.header.update
 
     @property
     def memoname(self):
-        """Table's memo name (if path included in filename on open)"""
+        """
+        table's memo name (if path included in filename on open)
+        """
         return self._meta.memoname
 
     @property
     def record_length(self):
         """
-        Number of bytes in a record
-        (including deleted flag and null field size)
+        number of bytes in a record (including deleted flag and null field size
         """
         return self._meta.header.record_length
 
     @property
     def supported_tables(self):
-        """allowable table types"""
+        """
+        allowable table types
+        """
         return self._supported_tables
 
     @property
+    def status(self):
+        """
+        CLOSED, READ_ONLY, or READ_WRITE
+        """
+        return self._meta.status
+
+    @property
     def version(self):
-        """returns the dbf type of the table"""
+        """
+        returns the dbf type of the table
+        """
         return self._version
 
     def add_fields(self, field_specs):
         """
-        Adds field(s) to the table layout.
-
-        Field spec format:
-        Name Type(Length,Decimals)[; Name Type(Length,Decimals)[...]]
-
-        A backup table is created with _backup appended to name
-        Current table is zapped, structure is recreated, and records are copied
-        from the backup.
+        adds field(s) to the table layout; format is Name Type(Length,Decimals)[; Name Type(Length,Decimals)[...]]
+        backup table is created with _backup appended to name
+        then zaps table, recreates current structure, and copies records back from the backup
         """
         meta = self._meta
         if meta.status != READ_WRITE:
@@ -4301,7 +4511,7 @@ class Table(_Navigation):
         if (len(fields) + ('_nullflags' in meta)) > meta.max_fields:
             raise DbfError(
                     "Adding %d more field%s would exceed the limit of %d"
-                    % (len(fields), ('', 's')[len(fields) == 1], meta.max_fields)
+                    % (len(fields), ('','s')[len(fields)==1], meta.max_fields)
                     )
         old_table = None
         if self:
@@ -4331,7 +4541,7 @@ class Table(_Navigation):
             if pieces and '(' in pieces[0]:
                 for i, p in enumerate(pieces):
                     if ')' in p:
-                        pieces[0: i + 1] = [''.join(pieces[0: i + 1])]
+                        pieces[0:i+1] = [''.join(pieces[0:i+1])]
                         break
             if name[0] == '_' or name[0].isdigit() or not name.replace('_', '').isalnum():
                 raise FieldSpecError("%s invalid:  field names must start with a letter, and can only contain letters, digits, and _" % name)
@@ -4345,7 +4555,10 @@ class Table(_Navigation):
                 raise FieldSpecError("Unknown field type:  %s" % field_type)
             init = self._meta.fieldtypes[field_type]['Init']
             flags = self._meta.fieldtypes[field_type]['flags']
-            length, decimals, flags = init(pieces, flags)
+            try:
+                length, decimals, flags = init(pieces, flags)
+            except FieldSpecError, exc:
+                raise FieldSpecError(exc.message + ' (%s:%s)' % (meta.filename, name))
             start = offset
             end = offset + length
             offset = end
@@ -4371,7 +4584,9 @@ class Table(_Navigation):
             old_table.close()
 
     def allow_nulls(self, fields):
-        """Set fields to allow null values"""
+        """
+        set fields to allow null values
+        """
         meta = self._meta
         if meta.status != READ_WRITE:
             raise DbfError('%s not in read/write mode, unable to change field types' % meta.filename)
@@ -4412,8 +4627,7 @@ class Table(_Navigation):
 
     def append(self, data='', drop=False, multiple=1):
         """
-        Adds <multiple> blank records, and fills fields with dict/tuple
-        values if present
+        adds <multiple> blank records, and fills fields with dict/tuple values if present
         """
         meta = self._meta
         if meta.status != READ_WRITE:
@@ -4494,8 +4708,7 @@ class Table(_Navigation):
 
     def close(self):
         """
-        Closes disk files, flushing record data to disk
-
+        closes disk files, flushing record data to disk
         ensures table data is available if keep_table
         ensures memo data is available if keep_memos
         """
@@ -4509,7 +4722,9 @@ class Table(_Navigation):
         self._meta.status = CLOSED
 
     def create_backup(self, new_name=None, on_disk=None):
-        """creates a backup table"""
+        """
+        creates a backup table
+        """
         meta = self._meta
         already_open = meta.status != CLOSED
         if not already_open:
@@ -4520,9 +4735,10 @@ class Table(_Navigation):
             new_name = self.filename + '_backup'
         if new_name is None:
             upper = self.filename.isupper()
-            name, ext = os.path.splitext(os.path.split(self.filename)[1])
+            directory, filename = os.path.split(self.filename)
+            name, ext = os.path.splitext(filename)
             extra = ('_backup', '_BACKUP')[upper]
-            new_name = os.path.join(temp_dir, name + extra + ext)
+            new_name = os.path.join(temp_dir or directory, name + extra + ext)
         bkup = Table(new_name, self.structure(), codepage=self.codepage.name, dbf_type=self._versionabbr, on_disk=on_disk)
         bkup.open()
         for record in self:
@@ -4535,7 +4751,7 @@ class Table(_Navigation):
 
     def create_index(self, key):
         """
-        Creates an in-memory index using the function key
+        creates an in-memory index using the function key
         """
         meta = self._meta
         if meta.status == CLOSED:
@@ -4543,14 +4759,15 @@ class Table(_Navigation):
         return Index(self, key)
 
     def create_template(self, record=None, defaults=None):
-        """Returns a record template that can be used like a record"""
+        """
+        returns a record template that can be used like a record
+        """
         return RecordTemplate(self._meta, original_record=record, defaults=defaults)
 
     def delete_fields(self, doomed):
         """
-        Removes field(s) from the table
-
-        Creates backup files with _backup appended to the file name,
+        removes field(s) from the table
+        creates backup files with _backup appended to the file name,
         then modifies current structure
         """
         meta = self._meta
@@ -4581,11 +4798,11 @@ class Table(_Navigation):
             for field in meta.fields:
                 if meta[field][START] == end:
                     specs = list(meta[field])
-                    end = specs[END]                    # self._meta[field][END]
-                    specs[START] = start                # self._meta[field][START] = start
-                    specs[END] = start + specs[LENGTH]  # self._meta[field][END] = start + self._meta[field][LENGTH]
-                    start = specs[END]                  # self._meta[field][END]
-                    meta[field] = tuple(specs)
+                    end = specs[END]                    #self._meta[field][END]
+                    specs[START] = start                #self._meta[field][START] = start
+                    specs[END] = start + specs[LENGTH]  #self._meta[field][END] = start + self._meta[field][LENGTH]
+                    start = specs[END]                  #self._meta[field][END]
+                    meta[field] =  tuple(specs)
         self._build_header_fields()
         self._update_disk()
         for name in list(meta):
@@ -4599,7 +4816,7 @@ class Table(_Navigation):
 
     def disallow_nulls(self, fields):
         """
-        Set fields to not allow null values
+        set fields to not allow null values
         """
         meta = self._meta
         if meta.status != READ_WRITE:
@@ -4621,7 +4838,7 @@ class Table(_Navigation):
         for field in fields:
             specs = list(meta[field])
             specs[FLAGS] &= 0xff ^ NULLABLE
-            meta[field] = tuple(specs)
+            meta[field] =  tuple(specs)
         meta.blankrecord = None
         self._build_header_fields()
         self._update_disk()
@@ -4633,7 +4850,7 @@ class Table(_Navigation):
 
     def field_info(self, field):
         """
-        Returns (dbf type, class, size, dec) of field
+        returns (dbf type, class, size, dec) of field
         """
         if field in self.field_names:
             field = self._meta[field]
@@ -4642,7 +4859,7 @@ class Table(_Navigation):
 
     def index(self, record, start=None, stop=None):
         """
-        Returns the index of record between start and stop
+        returns the index of record between start and stop
         start and stop default to the first and last record
         """
         if not isinstance(record, (Record, RecordTemplate, dict, tuple)):
@@ -4660,11 +4877,9 @@ class Table(_Navigation):
         else:
             raise NotFoundError("dbf.Table.index(x): x not in table", data=record)
 
-    def new(self, filename, field_specs=None, memo_size=None,
-            ignore_memos=None, codepage=None, default_data_types=None,
-            field_data_types=None, on_disk=True):
+    def new(self, filename, field_specs=None, memo_size=None, ignore_memos=None, codepage=None, default_data_types=None, field_data_types=None, on_disk=True):
         """
-        Returns a new table of the same type
+        returns a new table of the same type
         """
         if field_specs is None:
             field_specs = self.structure()
@@ -4688,7 +4903,7 @@ class Table(_Navigation):
 
     def nullable_field(self, field):
         """
-        Returns True if field allows Nulls
+        returns True if field allows Nulls
         """
         if field not in self.field_names:
             raise MissingField(field)
@@ -4696,7 +4911,7 @@ class Table(_Navigation):
 
     def open(self, mode=READ_WRITE):
         """
-        (re)Opens disk table, (re)initializes data structures
+        (re)opens disk table, (re)initializes data structures
         """
         if mode not in (READ_WRITE, READ_ONLY):
             raise DbfError("mode for open must be 'read-write' or 'read-only', not %r" % mode)
@@ -4735,7 +4950,7 @@ class Table(_Navigation):
 
     def pack(self):
         """
-        Physically removes all deleted records
+        physically removes all deleted records
         """
         meta = self._meta
         if meta.status != READ_WRITE:
@@ -4765,9 +4980,8 @@ class Table(_Navigation):
 
     def query(self, criteria):
         """
-        Return a List of all matching records according to criteria.
-
-        Criteria is a string that will be converted into a function
+        criteria is a string that will be converted into a function that returns
+        a List of all matching records
         """
         meta = self._meta
         if meta.status == CLOSED:
@@ -4776,7 +4990,7 @@ class Table(_Navigation):
 
     def reindex(self):
         """
-        Reprocess all indices for this table
+        reprocess all indices for this table
         """
         meta = self._meta
         if meta.status == CLOSED:
@@ -4786,7 +5000,7 @@ class Table(_Navigation):
 
     def rename_field(self, oldname, newname):
         """
-        Renames an existing field
+        renames an existing field
         """
         meta = self._meta
         if meta.status != READ_WRITE:
@@ -4809,7 +5023,7 @@ class Table(_Navigation):
 
     def resize_field(self, chosen, new_size):
         """
-        Resizes field (C only at this time)
+        resizes field (C only at this time)
         creates backup file, then modifies current structure
         """
         meta = self._meta
@@ -4849,9 +5063,8 @@ class Table(_Navigation):
 
     def structure(self, fields=None):
         """
-        Return field specification list suitable for creating same table
-        layout.
-        Fields should be a list of fields or None for all fields in table
+        return field specification list suitable for creating same table layout
+        fields should be a list of fields or None for all fields in table
         """
         field_specs = []
         fields = self._list_fields(fields)
@@ -4864,7 +5077,7 @@ class Table(_Navigation):
 
     def zap(self):
         """
-        Removes all records from table -- this cannot be undone!
+        removes all records from table -- this cannot be undone!
         """
         meta = self._meta
         if meta.status != READ_WRITE:
@@ -4884,37 +5097,38 @@ class Db3Table(Table):
     """
     Provides an interface for working with dBase III tables.
     """
+
     _version = 'dBase III Plus'
     _versionabbr = 'db3'
 
     @MutableDefault
     def _field_types():
         return {
-            'C': {
-                    'Type': 'Character', 'Retrieve': retrieve_character, 'Update': update_character, 'Blank': lambda x: ' ' * x, 'Init': add_character,
-                    'Class': unicode, 'Empty': unicode, 'flags': tuple(),
+            'C' : {
+                    'Type':'Character', 'Retrieve':retrieve_character, 'Update':update_character, 'Blank':lambda x: ' ' * x, 'Init':add_character,
+                    'Class':unicode, 'Empty':unicode, 'flags':tuple(),
                     },
-            'D': {
-                    'Type': 'Date', 'Retrieve': retrieve_date, 'Update': update_date, 'Blank': lambda x: '        ', 'Init': add_date,
-                    'Class': datetime.date, 'Empty': none, 'flags': tuple(),
+            'D' : {
+                    'Type':'Date', 'Retrieve':retrieve_date, 'Update':update_date, 'Blank':lambda x: '        ', 'Init':add_date,
+                    'Class':datetime.date, 'Empty':none, 'flags':tuple(),
                     },
-            'F': {
-                    'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': tuple(),
+            'F' : {
+                    'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_numeric,
+                    'Class':'default', 'Empty':none, 'flags':tuple(),
                     },
-            'L': {
-                    'Type': 'Logical', 'Retrieve': retrieve_logical, 'Update': update_logical, 'Blank': lambda x: '?', 'Init': add_logical,
-                    'Class': bool, 'Empty': none, 'flags': tuple(),
+            'L' : {
+                    'Type':'Logical', 'Retrieve':retrieve_logical, 'Update':update_logical, 'Blank':lambda x: '?', 'Init':add_logical,
+                    'Class':bool, 'Empty':none, 'flags':tuple(),
                     },
-            'M': {
-                    'Type': 'Memo', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': lambda x: '          ', 'Init': add_memo,
-                    'Class': unicode, 'Empty': unicode, 'flags': tuple(),
+            'M' : {
+                    'Type':'Memo', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '          ', 'Init':add_memo,
+                    'Class':unicode, 'Empty':unicode, 'flags':tuple(),
                     },
-            'N': {
-                    'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': tuple(),
-                    }
-        }
+            'N' : {
+                    'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_numeric,
+                    'Class':'default', 'Empty':none, 'flags':tuple(),
+                    } }
+
     _memoext = '.dbt'
     _memoClass = _Db3Memo
     _yesMemoMask = '\x80'
@@ -4941,7 +5155,7 @@ class Db3Table(Table):
 
     def _check_memo_integrity(self):
         """
-        Check memo integrity for dBase III and Clipper
+        dBase III and Clipper
         """
         if not self._meta.ignorememos:
             memo_fields = False
@@ -4967,7 +5181,7 @@ class Db3Table(Table):
 
     def _initialize_fields(self):
         """
-        Builds the FieldList of names, types, and descriptions
+        builds the FieldList of names, types, and descriptions
         """
         old_fields = defaultdict(dict)
         meta = self._meta
@@ -4984,7 +5198,7 @@ class Db3Table(Table):
             raise BadDataError("Header shows %d fields, but field definition block has %d fields" % (meta.header.field_count, len(fieldsdef) // 32))
         total_length = meta.header.record_length
         for i in range(meta.header.field_count):
-            fieldblock = fieldsdef[i * 32: (i + 1) * 32]
+            fieldblock = fieldsdef[i*32:(i+1)*32]
             name = unpack_str(fieldblock[:11])
             type = fieldblock[11]
             if not type in meta.fieldtypes:
@@ -5025,37 +5239,38 @@ class ClpTable(Db3Table):
     """
     Provides an interface for working with Clipper tables.
     """
+
     _version = 'Clipper 5'
     _versionabbr = 'clp'
 
     @MutableDefault
     def _field_types():
         return {
-            'C': {
-                    'Type': 'Character', 'Retrieve': retrieve_character, 'Update': update_character, 'Blank': lambda x: ' ' * x, 'Init': add_clp_character,
-                    'Class': unicode, 'Empty': unicode, 'flags': tuple(),
+            'C' : {
+                    'Type':'Character', 'Retrieve':retrieve_character, 'Update':update_character, 'Blank':lambda x: ' ' * x, 'Init':add_clp_character,
+                    'Class':unicode, 'Empty':unicode, 'flags':tuple(),
                     },
-            'D': {
-                    'Type': 'Date', 'Retrieve': retrieve_date, 'Update': update_date, 'Blank': lambda x: '        ', 'Init': add_date,
-                    'Class': datetime.date, 'Empty': none, 'flags': tuple(),
+            'D' : {
+                    'Type':'Date', 'Retrieve':retrieve_date, 'Update':update_date, 'Blank':lambda x: '        ', 'Init':add_date,
+                    'Class':datetime.date, 'Empty':none, 'flags':tuple(),
                     },
-            'F': {
-                    'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': tuple(),
+            'F' : {
+                    'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_numeric,
+                    'Class':'default', 'Empty':none, 'flags':tuple(),
                     },
-            'L': {
-                    'Type': 'Logical', 'Retrieve': retrieve_logical, 'Update': update_logical, 'Blank': lambda x: '?', 'Init': add_logical,
-                    'Class': bool, 'Empty': none, 'flags': tuple(),
+            'L' : {
+                    'Type':'Logical', 'Retrieve':retrieve_logical, 'Update':update_logical, 'Blank':lambda x: '?', 'Init':add_logical,
+                    'Class':bool, 'Empty':none, 'flags':tuple(),
                     },
-            'M': {
-                    'Type': 'Memo', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': lambda x: '          ', 'Init': add_memo,
-                    'Class': unicode, 'Empty': unicode, 'flags': tuple(),
+            'M' : {
+                    'Type':'Memo', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '          ', 'Init':add_memo,
+                    'Class':unicode, 'Empty':unicode, 'flags':tuple(),
                     },
-            'N': {
-                    'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': tuple(),
-                    }
-        }
+            'N' : {
+                    'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_numeric,
+                    'Class':'default', 'Empty':none, 'flags':tuple(),
+                    } }
+
     _memoext = '.dbt'
     _memoClass = _Db3Memo
     _yesMemoMask = '\x80'
@@ -5080,9 +5295,50 @@ class ClpTable(Db3Table):
     _dbfTableHeaderExtra = ''
     _supported_tables = ['\x03', '\x83']
 
+    class _TableHeader(Table._TableHeader):
+        """
+        represents the data block that defines a tables type and layout
+        """
+
+        @property
+        def fields(self):
+            "field block structure"
+            fieldblock = self._data[32:]
+            for i in range(len(fieldblock)//32+1):
+                cr = i * 32
+                if fieldblock[cr] == '\x0d':
+                    break
+            else:
+                raise BadDataError("corrupt field structure")
+            return fieldblock[:cr].tostring()
+        
+        @fields.setter
+        def fields(self, block):
+            fieldblock = self._data[32:]
+            for i in range(len(fieldblock)//32+1):
+                cr = i * 32
+                if fieldblock[cr] == '\x0d':
+                    break
+            else:
+                raise BadDataError("corrupt field structure")
+            cr += 32    # convert to indexing main structure
+            fieldlen = len(block)
+            if fieldlen % 32 != 0:
+                raise BadDataError("fields structure corrupt: %d is not a multiple of 32" % fieldlen)
+            self._data[32:cr] = array('c', block)                           # fields
+            self._data[8:10] = array('c', pack_short_int(len(self._data)))   # start
+            fieldlen = fieldlen // 32
+            recordlen = 1                                     # deleted flag
+            for i in range(fieldlen):
+                recordlen += ord(block[i*32+16])
+                if block[i*32+11] == 'C':
+                    recordlen += ord(block[i*32+17]) * 256
+            self._data[10:12] = array('c', pack_short_int(recordlen))
+
+
     def _build_header_fields(self):
         """
-        Constructs fieldblock for disk table
+        constructs fieldblock for disk table
         """
         fieldblock = array('c', '')
         memo = False
@@ -5157,7 +5413,7 @@ class ClpTable(Db3Table):
 
     def _initialize_fields(self):
         """
-        Builds the FieldList of names, types, and descriptions
+        builds the FieldList of names, types, and descriptions
         """
         meta = self._meta
         old_fields = defaultdict(dict)
@@ -5171,10 +5427,11 @@ class ClpTable(Db3Table):
         if len(fieldsdef) % 32 != 0:
             raise BadDataError("field definition block corrupt: %d bytes in size" % len(fieldsdef))
         if len(fieldsdef) // 32 != meta.header.field_count:
-            raise BadDataError("Header shows %d fields, but field definition block has %d fields" % (meta.header.field_count, len(fieldsdef) // 32))
+            raise BadDataError("Header shows %d fields, but field definition block has %d fields" 
+                    (meta.header.field_count, len(fieldsdef) // 32))
         total_length = meta.header.record_length
         for i in range(meta.header.field_count):
-            fieldblock = fieldsdef[i * 32: (i + 1) * 32]
+            fieldblock = fieldsdef[i*32:(i+1)*32]
             name = unpack_str(fieldblock[:11])
             type = fieldblock[11]
             if not type in meta.fieldtypes:
@@ -5207,7 +5464,8 @@ class ClpTable(Db3Table):
                     empty,
                     )
         if offset != total_length:
-            raise BadDataError("Header shows record length of %d, but calculated record length is %d" % (total_length, offset))
+            raise BadDataError("Header shows record length of %d, but calculated record length is %d" 
+                    (total_length, offset))
         meta.user_fields = [f for f in meta.fields if not meta[f][FLAGS] & SYSTEM]
         meta.user_field_count = len(meta.user_fields)
         Record._create_blank_data(meta)
@@ -5217,49 +5475,50 @@ class FpTable(Table):
     """
     Provides an interface for working with FoxPro 2 tables
     """
+
     _version = 'Foxpro'
     _versionabbr = 'fp'
 
     @MutableDefault
     def _field_types():
         return {
-            'C': {
-                    'Type': 'Character', 'Retrieve': retrieve_character, 'Update': update_character, 'Blank': lambda x: ' ' * x, 'Init': add_vfp_character,
-                    'Class': unicode, 'Empty': unicode, 'flags': ('binary', 'nocptrans', 'null', ),
+            'C' : {
+                    'Type':'Character', 'Retrieve':retrieve_character, 'Update':update_character, 'Blank':lambda x: ' ' * x, 'Init':add_vfp_character,
+                    'Class':unicode, 'Empty':unicode, 'flags':('binary', 'nocptrans', 'null', ),
                     },
-            'F': {
-                    'Type': 'Float', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_vfp_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': ('null', ),
+            'F' : {
+                    'Type':'Float', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_vfp_numeric,
+                    'Class':'default', 'Empty':none, 'flags':('null', ),
                     },
-            'N': {
-                    'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_vfp_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': ('null', ),
+            'N' : {
+                    'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_vfp_numeric,
+                    'Class':'default', 'Empty':none, 'flags':('null', ),
                     },
-            'L': {
-                    'Type': 'Logical', 'Retrieve': retrieve_logical, 'Update': update_logical, 'Blank': lambda x: '?', 'Init': add_logical,
-                    'Class': bool, 'Empty': none, 'flags': ('null', ),
+            'L' : {
+                    'Type':'Logical', 'Retrieve':retrieve_logical, 'Update':update_logical, 'Blank':lambda x: '?', 'Init':add_logical,
+                    'Class':bool, 'Empty':none, 'flags':('null', ),
                     },
-            'D': {
-                    'Type': 'Date', 'Retrieve': retrieve_date, 'Update': update_date, 'Blank': lambda x: '        ', 'Init': add_date,
-                    'Class': datetime.date, 'Empty': none, 'flags': ('null', ),
+            'D' : {
+                    'Type':'Date', 'Retrieve':retrieve_date, 'Update':update_date, 'Blank':lambda x: '        ', 'Init':add_date,
+                    'Class':datetime.date, 'Empty':none, 'flags':('null', ),
                     },
-            'M': {
-                    'Type': 'Memo', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': lambda x: '\x00\x00\x00\x00', 'Init': add_vfp_memo,
-                    'Class': unicode, 'Empty': unicode, 'flags': ('binary', 'nocptrans', 'null', ),
+            'M' : {
+                    'Type':'Memo', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Class':unicode, 'Empty':unicode, 'flags':('binary', 'nocptrans', 'null', ),
                     },
-            'G': {
-                    'Type': 'General', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': lambda x: '\x00\x00\x00\x00', 'Init': add_vfp_memo,
-                    'Class': bytes, 'Empty': bytes, 'flags': ('null', ),
+            'G' : {
+                    'Type':'General', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Class':bytes, 'Empty':bytes, 'flags':('null', ),
                     },
-            'P': {
-                    'Type': 'Picture', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': lambda x: '\x00\x00\x00\x00', 'Init': add_vfp_memo,
-                    'Class': bytes, 'Empty': bytes, 'flags': ('null', ),
+            'P' : {
+                    'Type':'Picture', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Class':bytes, 'Empty':bytes, 'flags':('null', ),
                     },
-            '0': {
-                    'Type': '_NullFlags', 'Retrieve': unsupported_type, 'Update': unsupported_type, 'Blank': lambda x: '\x00' * x, 'Init': None,
-                    'Class': none, 'Empty': none, 'flags': ('binary', 'system', ),
-                    }
-        }
+            '0' : {
+                    'Type':'_NullFlags', 'Retrieve':unsupported_type, 'Update':unsupported_type, 'Blank':lambda x: '\x00' * x, 'Init':None,
+                    'Class':none, 'Empty':none, 'flags':('binary', 'system', ),
+                    } }
+
     _memoext = '.fpt'
     _memoClass = _VfpMemo
     _yesMemoMask = '\xf5'               # 1111 0101
@@ -5309,7 +5568,7 @@ class FpTable(Table):
 
     def _initialize_fields(self):
         """
-        Builds the FieldList of names, types, and descriptions
+        builds the FieldList of names, types, and descriptions
         """
         meta = self._meta
         old_fields = defaultdict(dict)
@@ -5323,10 +5582,11 @@ class FpTable(Table):
         if len(fieldsdef) % 32 != 0:
             raise BadDataError("field definition block corrupt: %d bytes in size" % len(fieldsdef))
         if len(fieldsdef) // 32 != meta.header.field_count:
-            raise BadDataError("Header shows %d fields, but field definition block has %d fields" % (meta.header.field_count, len(fieldsdef) // 32))
+            raise BadDataError("Header shows %d fields, but field definition block has %d fields" 
+                    (meta.header.field_count, len(fieldsdef) // 32))
         total_length = meta.header.record_length
         for i in range(meta.header.field_count):
-            fieldblock = fieldsdef[i * 32: (i + 1) * 32]
+            fieldblock = fieldsdef[i*32:(i+1)*32]
             name = unpack_str(fieldblock[:11])
             type = fieldblock[11]
             if not type in meta.fieldtypes:
@@ -5364,86 +5624,90 @@ class FpTable(Table):
 
     @staticmethod
     def _pack_date(date):
-        """Returns a group of three bytes, in integer form, of the date"""
+        """
+        Returns a group of three bytes, in integer form, of the date
+        """
         return "%c%c%c" % (date.year - 2000, date.month, date.day)
 
     @staticmethod
     def _unpack_date(bytestr):
-        """Returns a Date() of the packed three-byte date passed in"""
+        """
+        Returns a Date() of the packed three-byte date passed in
+        """
         year, month, day = struct.unpack('<BBB', bytestr)
         year += 2000
         return Date(year, month, day)
-
 
 class VfpTable(FpTable):
     """
     Provides an interface for working with Visual FoxPro 6 tables
     """
+
     _version = 'Visual Foxpro'
     _versionabbr = 'vfp'
 
     @MutableDefault
     def _field_types():
         return {
-            'C': {
-                    'Type': 'Character', 'Retrieve': retrieve_character, 'Update': update_character, 'Blank': lambda x: ' ' * x, 'Init': add_vfp_character,
-                    'Class': unicode, 'Empty': unicode, 'flags': ('binary', 'nocptrans', 'null', ),
+            'C' : {
+                    'Type':'Character', 'Retrieve':retrieve_character, 'Update':update_character, 'Blank':lambda x: ' ' * x, 'Init':add_vfp_character,
+                    'Class':unicode, 'Empty':unicode, 'flags':('binary', 'nocptrans', 'null', ),
                     },
-            'Y': {
-                    'Type': 'Currency', 'Retrieve': retrieve_currency, 'Update': update_currency, 'Blank': lambda x: '\x00' * 8, 'Init': add_vfp_currency,
-                    'Class': Decimal, 'Empty': none, 'flags': ('null',),
+            'Y' : {
+                    'Type':'Currency', 'Retrieve':retrieve_currency, 'Update':update_currency, 'Blank':lambda x: '\x00' * 8, 'Init':add_vfp_currency,
+                    'Class':Decimal, 'Empty':none, 'flags':('null', ),
                     },
-            'B': {
-                    'Type': 'Double', 'Retrieve': retrieve_double, 'Update': update_double, 'Blank': lambda x: '\x00' * 8, 'Init': add_vfp_double,
-                    'Class': float, 'Empty': none, 'flags': ('null', ),
+            'B' : {
+                    'Type':'Double', 'Retrieve':retrieve_double, 'Update':update_double, 'Blank':lambda x: '\x00' * 8, 'Init':add_vfp_double,
+                    'Class':float, 'Empty':none, 'flags':('null', ),
                     },
-            'F': {
-                    'Type': 'Float', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_vfp_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': ('null', ),
+            'F' : {
+                    'Type':'Float', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_vfp_numeric,
+                    'Class':'default', 'Empty':none, 'flags':('null', ),
                     },
-            'N': {
-                    'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': lambda x: ' ' * x, 'Init': add_vfp_numeric,
-                    'Class': 'default', 'Empty': none, 'flags': ('null', ),
+            'N' : {
+                    'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':lambda x: ' ' * x, 'Init':add_vfp_numeric,
+                    'Class':'default', 'Empty':none, 'flags':('null', ),
                     },
-            'I': {
-                    'Type': 'Integer', 'Retrieve': retrieve_integer, 'Update': update_integer, 'Blank': lambda x: '\x00' * 4, 'Init': add_vfp_integer,
-                    'Class': int, 'Empty': none, 'flags': ('null', ),
+            'I' : {
+                    'Type':'Integer', 'Retrieve':retrieve_integer, 'Update':update_integer, 'Blank':lambda x: '\x00' * 4, 'Init':add_vfp_integer,
+                    'Class':int, 'Empty':none, 'flags':('null', ),
                     },
-            'L': {
-                    'Type': 'Logical', 'Retrieve': retrieve_logical, 'Update': update_logical, 'Blank': lambda x: '?', 'Init': add_logical,
-                    'Class': bool, 'Empty': none, 'flags': ('null', ),
+            'L' : {
+                    'Type':'Logical', 'Retrieve':retrieve_logical, 'Update':update_logical, 'Blank':lambda x: '?', 'Init':add_logical,
+                    'Class':bool, 'Empty':none, 'flags':('null', ),
                     },
-            'D': {
-                    'Type': 'Date', 'Retrieve': retrieve_date, 'Update': update_date, 'Blank': lambda x: '        ', 'Init': add_date,
-                    'Class': datetime.date, 'Empty': none, 'flags': ('null', ),
+            'D' : {
+                    'Type':'Date', 'Retrieve':retrieve_date, 'Update':update_date, 'Blank':lambda x: '        ', 'Init':add_date,
+                    'Class':datetime.date, 'Empty':none, 'flags':('null', ),
                     },
-            'T': {
-                    'Type': 'DateTime', 'Retrieve': retrieve_vfp_datetime, 'Update': update_vfp_datetime, 'Blank': lambda x: '\x00' * 8, 'Init': add_vfp_datetime,
-                    'Class': datetime.datetime, 'Empty': none, 'flags': ('null', ),
+            'T' : {
+                    'Type':'DateTime', 'Retrieve':retrieve_vfp_datetime, 'Update':update_vfp_datetime, 'Blank':lambda x: '\x00' * 8, 'Init':add_vfp_datetime,
+                    'Class':datetime.datetime, 'Empty':none, 'flags':('null', ),
                     },
-            'M': {
-                    'Type': 'Memo', 'Retrieve': retrieve_vfp_memo, 'Update': update_vfp_memo, 'Blank': lambda x: '\x00\x00\x00\x00', 'Init': add_vfp_memo,
-                    'Class': unicode, 'Empty': unicode, 'flags': ('binary', 'nocptrans', 'null', ),
+            'M' : {
+                    'Type':'Memo', 'Retrieve':retrieve_vfp_memo, 'Update':update_vfp_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Class':unicode, 'Empty':unicode, 'flags':('binary', 'nocptrans', 'null', ),
                     },
-            'G': {
-                    'Type': 'General', 'Retrieve': retrieve_vfp_memo, 'Update': update_vfp_memo, 'Blank': lambda x: '\x00\x00\x00\x00', 'Init': add_vfp_memo,
-                    'Class': bytes, 'Empty': bytes, 'flags': ('null', ),
+            'G' : {
+                    'Type':'General', 'Retrieve':retrieve_vfp_memo, 'Update':update_vfp_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Class':bytes, 'Empty':bytes, 'flags':('null', ),
                     },
-            'P': {
-                    'Type': 'Picture', 'Retrieve': retrieve_vfp_memo, 'Update': update_vfp_memo, 'Blank': lambda x: '\x00\x00\x00\x00', 'Init': add_vfp_memo,
-                    'Class': bytes, 'Empty': bytes, 'flags': ('null',),
+            'P' : {
+                    'Type':'Picture', 'Retrieve':retrieve_vfp_memo, 'Update':update_vfp_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Class':bytes, 'Empty':bytes, 'flags':('null', ),
                     },
-            '0': {
-                    'Type': '_NullFlags', 'Retrieve': unsupported_type, 'Update': unsupported_type, 'Blank': lambda x: '\x00' * x, 'Init': int,
-                    'Class': none, 'Empty': none, 'flags': ('binary', 'system',),
-                    }
-        }
+            '0' : {
+                    'Type':'_NullFlags', 'Retrieve':unsupported_type, 'Update':unsupported_type, 'Blank':lambda x: '\x00' * x, 'Init':int,
+                    'Class':none, 'Empty':none, 'flags':('binary', 'system',),
+                    } }
+
     _memoext = '.fpt'
     _memoClass = _VfpMemo
     _yesMemoMask = '\x30'               # 0011 0000
     _noMemoMask = '\x30'                # 0011 0000
     _binary_types = ('B', 'G', 'I', 'P', 'T', 'Y')
-    _character_types = ('C', 'D', 'F', 'L', 'M', 'N')  # field representing character data
+    _character_types = ('C', 'D', 'F', 'L', 'M', 'N')       # field representing character data
     _currency_types = ('Y',)
     _date_types = ('D', 'T')
     _datetime_types = ('T',)
@@ -5463,7 +5727,7 @@ class VfpTable(FpTable):
 
     def _initialize_fields(self):
         """
-        Builds the FieldList of names, types, and descriptions
+        builds the FieldList of names, types, and descriptions
         """
         meta = self._meta
         old_fields = defaultdict(dict)
@@ -5477,7 +5741,7 @@ class VfpTable(FpTable):
         meta.nullflags = None
         total_length = meta.header.record_length
         for i in range(meta.header.field_count):
-            fieldblock = fieldsdef[i * 32: (i + 1) * 32]
+            fieldblock = fieldsdef[i*32:(i+1)*32]
             name = unpack_str(fieldblock[:11])
             type = fieldblock[11]
             if not type in meta.fieldtypes:
@@ -5516,8 +5780,9 @@ class VfpTable(FpTable):
 
 class List(_Navigation):
     """
-    List of Dbf records, with set-like behavior
+    list of Dbf records, with set-like behavior
     """
+
     _desc = ''
 
     def __init__(self, records=None, desc=None, key=None):
@@ -5602,7 +5867,7 @@ class List(_Navigation):
         if isinstance(key, int):
             count = len(self._list)
             if not -count <= key < count:
-                raise IndexError("Record %d is not in list." % key)
+                raise NotFoundError("Record %d is not in list." % key)
             return self._get_record(*self._list[key])
         elif isinstance(key, slice):
             result = self.__class__()
@@ -5653,7 +5918,7 @@ class List(_Navigation):
     def __repr__(self):
         self._still_valid_check()
         if self._desc:
-            return "%s(key=(%s), decs=%s)" % (self.__class__, self.key.__doc__, self._desc)
+            return "%s(key=(%s), desc=%s)" % (self.__class__, self.key.__doc__, self._desc)
         else:
             return "%s(key=(%s))" % (self.__class__, self.key.__doc__)
 
@@ -5734,7 +5999,7 @@ class List(_Navigation):
     def _maybe_add(self, item):
         self._still_valid_check()
         table, recno, key = item
-        self._tables[table] = table._pack_count
+        self._tables[table] = table._pack_count   # TODO: check that _pack_count is the same if already in table
         if key not in self._set:
             self._set.add(key)
             self._list.append(item)
@@ -5774,6 +6039,7 @@ class List(_Navigation):
         for table, last_pack in self._tables.items():
             if last_pack != getattr(table, '_pack_count'):
                 raise DbfError("table has been packed; list is invalid")
+
     _nav_check = _still_valid_check
 
     def append(self, record):
@@ -5804,7 +6070,7 @@ class List(_Navigation):
 
     def index(self, record, start=None, stop=None):
         """
-        Returns the index of record between start and stop
+        returns the index of record between start and stop
         start and stop default to the first and last record
         """
         if not isinstance(record, (Record, RecordTemplate, dict, tuple)):
@@ -5828,7 +6094,9 @@ class List(_Navigation):
             self._list.insert(i, item)
 
     def key(self, record):
-        "table_name, record_number"
+        """
+        table_name, record_number
+        """
         self._still_valid_check()
         return source_table(record), recno(record)
 
@@ -5843,8 +6111,7 @@ class List(_Navigation):
 
     def query(self, criteria):
         """
-        Criteria is a callback that returns a truthy value for matching
-        record
+        criteria is a callback that returns a truthy value for matching record
         """
         return pql(self, criteria)
 
@@ -5870,13 +6137,17 @@ class List(_Navigation):
 
 
 class Index(_Navigation):
+    """
+    non-persistent index for a table
+    """
+
     def __init__(self, table, key):
         self._table = table
         self._values = []             # ordered list of values
         self._rec_by_val = []         # matching record numbers
         self._records = {}            # record numbers:values
         self.__doc__ = key.__doc__ or 'unknown'
-        self.key = key
+        self._key = key
         for record in table:
             value = key(record)
             if value is DoNotIndex:
@@ -5893,8 +6164,6 @@ class Index(_Navigation):
     def __call__(self, record):
         rec_num = recno(record)
         key = self.key(record)
-        if not isinstance(key, tuple):
-            key = (key, )
         if rec_num in self._records:
             if self._records[rec_num] == key:
                 return
@@ -5914,23 +6183,23 @@ class Index(_Navigation):
     def __contains__(self, data):
         if not isinstance(data, (Record, RecordTemplate, tuple, dict)):
             raise TypeError("%r is not a record, templace, tuple, nor dict" % (data, ))
-        if isinstance(data, Record) and source_table(data) is self._table:
-            return recno(data) in self._records
-        else:
-            try:
-                value = self.key(data)
-                return value in self._values
-            except Exception:
-                for record in self:
-                    if record == data:
-                        return True
-                return False
+        try:
+            value = self.key(data)
+            return value in self._values
+        except Exception:
+            for record in self:
+                if record == data:
+                    return True
+            return False
 
     def __getitem__(self, key):
+        '''if key is an integer, returns the matching record;
+        if key is a [slice | string | tuple | record] returns a List;
+        raises NotFoundError on failure'''
         if isinstance(key, int):
             count = len(self._values)
             if not -count <= key < count:
-                raise IndexError("Record %d is not in list." % key)
+                raise NotFoundError("Record %d is not in list." % key)
             rec_num = self._rec_by_val[key]
             return self._table[rec_num]
         elif isinstance(key, slice):
@@ -5945,15 +6214,20 @@ class Index(_Navigation):
                 record = self._table[self._rec_by_val[loc]]
                 result._maybe_add(item=(self._table, self._rec_by_val[loc], result.key(record)))
             return result
-        elif isinstance(key, (str, unicode, tuple, Record)):
-            if isinstance(key, Record):
+        elif isinstance (key, (str, unicode, tuple, Record, RecordTemplate)):
+            if isinstance(key, Record, RecordTemplate):
                 key = self.key(key)
-            elif not isinstance(key, tuple):
+            elif isinstance(key, String):
                 key = (key, )
-            loc = self.find(key)
-            if loc == -1:
-                raise KeyError(key)
-            return self._table[self._rec_by_val[loc]]
+            lo = self._search(key, where='left')
+            hi = self._search(key, where='right')
+            if lo == hi:
+                raise NotFoundError(key)
+            result = List(desc='match = %r' % key)
+            for loc in range(lo, hi):
+                record = self._table[self._rec_by_val[loc]]
+                result._maybe_add(item=(self._table, self._rec_by_val[loc], result.key(record)))
+            return result
         else:
             raise TypeError('indices must be integers, match objects must by strings or tuples')
 
@@ -5972,19 +6246,30 @@ class Index(_Navigation):
         return len(self._records)
 
     def _clear(self):
-        """Removes all entries from index"""
+        """
+        removes all entries from index
+        """
         self._values[:] = []
         self._rec_by_val[:] = []
         self._records.clear()
 
+    def _key(self, record):
+        """
+        table_name, record_number
+        """
+        self._still_valid_check()
+        return source_table(record), recno(record)
+
     def _nav_check(self):
-        """Raises error if table is closed"""
+        """
+        raises error if table is closed
+        """
         if self._table._meta.status == CLOSED:
             raise DbfError('indexed table %s is closed' % self.filename)
 
     def _partial_match(self, target, match):
         target = target[:len(match)]
-        if isinstance(match[-1], (str, unicode)):
+        if isinstance(match[-1], String):
             target = list(target)
             target[-1] = target[-1][:len(match[-1])]
             target = tuple(target)
@@ -5999,18 +6284,23 @@ class Index(_Navigation):
             self._rec_by_val.pop(vindex)
 
     def _reindex(self):
-        """Reindexes all records"""
+        """
+        reindexes all records
+        """
         for record in self._table:
             self(record)
 
-    def _search(self, match, lo=0, hi=None):
+    def _search(self, match, lo=0, hi=None, where=None):
         if hi is None:
             hi = len(self._values)
-        return bisect_left(self._values, match, lo, hi)
+        if where == 'left':
+            return bisect_left(self._values, match, lo, hi)
+        elif where == 'right':
+            return bisect_right(self._values, match, lo, hi)
 
     def index(self, record, start=None, stop=None):
         """
-        Returns the index of record between start and stop
+        returns the index of record between start and stop
         start and stop default to the first and last record
         """
         if not isinstance(record, (Record, RecordTemplate, dict, tuple)):
@@ -6028,7 +6318,7 @@ class Index(_Navigation):
 
     def index_search(self, match, start=None, stop=None, nearest=False, partial=False):
         """
-        Returns the index of match between start and stop
+        returns the index of match between start and stop
         start and stop default to the first and last record.
         if nearest is true returns the location of where the match should be
         otherwise raises NotFoundError
@@ -6040,7 +6330,7 @@ class Index(_Navigation):
             start = 0
         if stop is None:
             stop = len(self)
-        loc = self._search(match, start, stop)
+        loc = self._search(match, start, stop, where='left')
         if loc == len(self._values):
             if nearest:
                 return IndexLocation(loc, False)
@@ -6053,22 +6343,28 @@ class Index(_Navigation):
         else:
             raise NotFoundError("dbf.Index.index_search(x): x not in Index", data=match)
 
+    def key(self, record):
+        result = self._key(record)
+        if not isinstance(result, tuple):
+            result = (result, )
+        return result
+
     def query(self, criteria):
         """
-        Criteria is a callback that returns a truthy value for matching record
+        criteria is a callback that returns a truthy value for matching record
         """
         self._nav_check()
         return pql(self, criteria)
 
     def search(self, match, partial=False):
         """
-        Returns dbf.List of all (partially) matching records
+        returns dbf.List of all (partially) matching records
         """
         self._nav_check()
         result = List()
         if not isinstance(match, tuple):
             match = (match, )
-        loc = self._search(match)
+        loc = self._search(match, where='left')
         if loc == len(self._values):
             return result
         while loc < len(self._values) and self._values[loc] == match:
@@ -6083,123 +6379,274 @@ class Index(_Navigation):
         return result
 
 
+class Relation(object):
+    """
+    establishes a relation between two dbf tables (not persistent)
+    """
+
+    relations = {}
+
+    def __new__(cls, src, tgt, src_names=None, tgt_names=None):
+        if (len(src) != 2 or  len(tgt) != 2):
+            raise DbfError("Relation should be called with ((src_table, src_field), (tgt_table, tgt_field))")
+        if src_names and len(src_names) !=2 or tgt_names and len(tgt_names) != 2:
+            raise DbfError('src_names and tgt_names, if specified, must be ("table","field")')
+        src_table, src_field = src
+        tgt_table, tgt_field = tgt
+        try:
+            if isinstance(src_field, Integer):
+                table, field = src_table, src_field
+                src_field = table.field_names[field]
+            else:
+                src_table.field_names.index(src_field)
+            if isinstance(tgt_field, Integer):
+                table, field = tgt_table, tgt_field
+                tgt_field = table.field_names[field]
+            else:
+                tgt_table.field_names.index(tgt_field)
+        except (IndexError, ValueError):
+            raise DbfError('%r not in %r' % (field, table))
+        if src_names:
+            src_table_name, src_field_name = src_names
+        else:
+            src_table_name, src_field_name = src_table.filename, src_field
+            if src_table_name[-4:].lower() == '.dbf':
+                src_table_name = src_table_name[:-4]
+        if tgt_names:
+            tgt_table_name, tgt_field_name = tgt_names
+        else:
+            tgt_table_name, tgt_field_name = tgt_table.filename, tgt_field
+            if tgt_table_name[-4:].lower() == '.dbf':
+                tgt_table_name = tgt_table_name[:-4]
+        relation = cls.relations.get(((src_table, src_field), (tgt_table, tgt_field)))
+        if relation is not None:
+            return relation
+        obj = object.__new__(cls)
+        obj._src_table, obj._src_field = src_table, src_field
+        obj._tgt_table, obj._tgt_field = tgt_table, tgt_field
+        obj._src_table_name, obj._src_field_name = src_table_name, src_field_name
+        obj._tgt_table_name, obj._tgt_field_name = tgt_table_name, tgt_field_name
+        obj._tables = dict()
+        cls.relations[((src_table, src_field), (tgt_table, tgt_field))] = obj
+        return obj
+
+    def __eq__(yo, other):
+        if (yo.src_table == other.src_table
+        and yo.src_field == other.src_field
+        and yo.tgt_table == other.tgt_table
+        and yo.tgt_field == other.tgt_field):
+            return True
+        return False
+    
+    def __getitem__(yo, record):
+        """
+        record should be from the source table
+        """
+        key = (record[yo.src_field], )
+        try:
+            return yo.index[key]
+        except NotFoundError:
+            return List(desc='%s not found' % key)
+        
+    def __hash__(yo):
+        return hash((yo.src_table, yo.src_field, yo.tgt_table, yo.tgt_field))
+    
+    def __ne__(yo, other):
+        if (yo.src_table != other.src_table
+        or  yo.src_field != other.src_field
+        or  yo.tgt_table != other.tgt_table
+        or  yo.tgt_field != other.tgt_field):
+            return True
+        return False
+    
+    def __repr__(yo):
+        return "Relation((%r, %r), (%r, %r))" % (yo.src_table_name, yo.src_field, yo.tgt_table_name, yo.tgt_field)
+    
+    def __str__(yo):
+        return "%s:%s --> %s:%s" % (yo.src_table_name, yo.src_field_name, yo.tgt_table_name, yo.tgt_field_name)
+    
+    @property
+    def src_table(yo):
+        "name of source table"
+        return yo._src_table
+    
+    @property
+    def src_field(yo):
+        "name of source field"
+        return yo._src_field
+    
+    @property
+    def src_table_name(yo):
+        return yo._src_table_name
+    
+    @property
+    def src_field_name(yo):
+        return yo._src_field_name
+    
+    @property
+    def tgt_table(yo):
+        "name of target table"
+        return yo._tgt_table
+    
+    @property
+    def tgt_field(yo):
+        "name of target field"
+        return yo._tgt_field
+    
+    @property
+    def tgt_table_name(yo):
+        return yo._tgt_table_name
+    
+    @property
+    def tgt_field_name(yo):
+        return yo._tgt_field_name
+    
+    @LazyAttr
+    def index(yo):
+        def index(record, field=yo._tgt_field):
+            return record[field]
+        index.__doc__ = "%s:%s --> %s:%s" % (yo.src_table_name, yo.src_field_name, yo.tgt_table_name, yo.tgt_field_name)
+        yo.index = yo._tgt_table.create_index(index)
+        source = dbf.List(yo._src_table, key=lambda rec, field=yo._src_field: rec[field])
+        target = dbf.List(yo._tgt_table, key=lambda rec, field=yo._tgt_field: rec[field])
+        if len(source) != len(yo._src_table):
+            yo._tables[yo._src_table] = 'many'
+        else:
+            yo._tables[yo._src_table] = 'one'
+        if len(target) != len(yo._tgt_table):
+            yo._tables[yo._tgt_table] = 'many'
+        else:
+            yo._tables[yo._tgt_table] = 'one'
+        return yo.index
+    
+    def one_or_many(yo, table):
+        yo.index    # make sure yo._tables has been populated
+        try:
+            if isinstance(table, String):
+                table = (yo._src_table, yo._tgt_table)[yo._tgt_table_name == table]
+            return yo._tables[table]
+        except IndexError:
+            raise NotFoundError("table %s not in relation" % table)
+
+
 class IndexFile(_Navigation):
     pass
 
+
 # table meta
+
 table_types = {
-    'db3': Db3Table,
-    'clp': ClpTable,
-    'fp' : FpTable,
-    'vfp': VfpTable,
-}
+    'db3' : Db3Table,
+    'clp' : ClpTable,
+    'fp'  : FpTable,
+    'vfp' : VfpTable,
+    }
 
 version_map = {
-        '\x02': 'FoxBASE',
-        '\x03': 'dBase III Plus',
-        '\x04': 'dBase IV',
-        '\x05': 'dBase V',
-        '\x30': 'Visual FoxPro',
-        '\x31': 'Visual FoxPro (auto increment field)',
-        '\x32': 'Visual FoxPro (VarChar, VarBinary, or BLOB enabled)',
-        '\x43': 'dBase IV SQL table files',
-        '\x63': 'dBase IV SQL system files',
-        '\x83': 'dBase III Plus w/memos',
-        '\x8b': 'dBase IV w/memos',
-        '\x8e': 'dBase IV w/SQL table',
-        '\xf5': 'FoxPro w/memos'
-}
+        '\x02' : 'FoxBASE',
+        '\x03' : 'dBase III Plus',
+        '\x04' : 'dBase IV',
+        '\x05' : 'dBase V',
+        '\x30' : 'Visual FoxPro',
+        '\x31' : 'Visual FoxPro (auto increment field)',
+        '\x32' : 'Visual FoxPro (VarChar, VarBinary, or BLOB enabled)',
+        '\x43' : 'dBase IV SQL table files',
+        '\x63' : 'dBase IV SQL system files',
+        '\x83' : 'dBase III Plus w/memos',
+        '\x8b' : 'dBase IV w/memos',
+        '\x8e' : 'dBase IV w/SQL table',
+        '\xf5' : 'FoxPro w/memos'}
 
 code_pages = {
-        '\x00': ('ascii', "plain ol' ascii"),
-        '\x01': ('cp437', 'U.S. MS-DOS'),
-        '\x02': ('cp850', 'International MS-DOS'),
-        '\x03': ('cp1252', 'Windows ANSI'),
-        '\x04': ('mac_roman', 'Standard Macintosh'),
-        '\x08': ('cp865', 'Danish OEM'),
-        '\x09': ('cp437', 'Dutch OEM'),
-        '\x0A': ('cp850', 'Dutch OEM (secondary)'),
-        '\x0B': ('cp437', 'Finnish OEM'),
-        '\x0D': ('cp437', 'French OEM'),
-        '\x0E': ('cp850', 'French OEM (secondary)'),
-        '\x0F': ('cp437', 'German OEM'),
-        '\x10': ('cp850', 'German OEM (secondary)'),
-        '\x11': ('cp437', 'Italian OEM'),
-        '\x12': ('cp850', 'Italian OEM (secondary)'),
-        '\x13': ('cp932', 'Japanese Shift-JIS'),
-        '\x14': ('cp850', 'Spanish OEM (secondary)'),
-        '\x15': ('cp437', 'Swedish OEM'),
-        '\x16': ('cp850', 'Swedish OEM (secondary)'),
-        '\x17': ('cp865', 'Norwegian OEM'),
-        '\x18': ('cp437', 'Spanish OEM'),
-        '\x19': ('cp437', 'English OEM (Britain)'),
-        '\x1A': ('cp850', 'English OEM (Britain) (secondary)'),
-        '\x1B': ('cp437', 'English OEM (U.S.)'),
-        '\x1C': ('cp863', 'French OEM (Canada)'),
-        '\x1D': ('cp850', 'French OEM (secondary)'),
-        '\x1F': ('cp852', 'Czech OEM'),
-        '\x22': ('cp852', 'Hungarian OEM'),
-        '\x23': ('cp852', 'Polish OEM'),
-        '\x24': ('cp860', 'Portugese OEM'),
-        '\x25': ('cp850', 'Potugese OEM (secondary)'),
-        '\x26': ('cp866', 'Russian OEM'),
-        '\x37': ('cp850', 'English OEM (U.S.) (secondary)'),
-        '\x40': ('cp852', 'Romanian OEM'),
-        '\x4D': ('cp936', 'Chinese GBK (PRC)'),
-        '\x4E': ('cp949', 'Korean (ANSI/OEM)'),
-        '\x4F': ('cp950', 'Chinese Big 5 (Taiwan)'),
-        '\x50': ('cp874', 'Thai (ANSI/OEM)'),
-        '\x57': ('cp1252', 'ANSI'),
-        '\x58': ('cp1252', 'Western European ANSI'),
-        '\x59': ('cp1252', 'Spanish ANSI'),
-        '\x64': ('cp852', 'Eastern European MS-DOS'),
-        '\x65': ('cp866', 'Russian MS-DOS'),
-        '\x66': ('cp865', 'Nordic MS-DOS'),
-        '\x67': ('cp861', 'Icelandic MS-DOS'),
-        '\x68': (None, 'Kamenicky (Czech) MS-DOS'),
-        '\x69': (None, 'Mazovia (Polish) MS-DOS'),
-        '\x6a': ('cp737', 'Greek MS-DOS (437G)'),
-        '\x6b': ('cp857', 'Turkish MS-DOS'),
-        '\x78': ('cp950', 'Traditional Chinese (Hong Kong SAR, Taiwan) Windows'),
-        '\x79': ('cp949', 'Korean Windows'),
-        '\x7a': ('cp936', 'Chinese Simplified (PRC, Singapore) Windows'),
-        '\x7b': ('cp932', 'Japanese Windows'),
-        '\x7c': ('cp874', 'Thai Windows'),
-        '\x7d': ('cp1255', 'Hebrew Windows'),
-        '\x7e': ('cp1256', 'Arabic Windows'),
-        '\xc8': ('cp1250', 'Eastern European Windows'),
-        '\xc9': ('cp1251', 'Russian Windows'),
-        '\xca': ('cp1254', 'Turkish Windows'),
-        '\xcb': ('cp1253', 'Greek Windows'),
-        '\x96': ('mac_cyrillic', 'Russian Macintosh'),
-        '\x97': ('mac_latin2', 'Macintosh EE'),
-        '\x98': ('mac_greek', 'Greek Macintosh')
-}
+        '\x00' : ('ascii', "plain ol' ascii"),
+        '\x01' : ('cp437', 'U.S. MS-DOS'),
+        '\x02' : ('cp850', 'International MS-DOS'),
+        '\x03' : ('cp1252', 'Windows ANSI'),
+        '\x04' : ('mac_roman', 'Standard Macintosh'),
+        '\x08' : ('cp865', 'Danish OEM'),
+        '\x09' : ('cp437', 'Dutch OEM'),
+        '\x0A' : ('cp850', 'Dutch OEM (secondary)'),
+        '\x0B' : ('cp437', 'Finnish OEM'),
+        '\x0D' : ('cp437', 'French OEM'),
+        '\x0E' : ('cp850', 'French OEM (secondary)'),
+        '\x0F' : ('cp437', 'German OEM'),
+        '\x10' : ('cp850', 'German OEM (secondary)'),
+        '\x11' : ('cp437', 'Italian OEM'),
+        '\x12' : ('cp850', 'Italian OEM (secondary)'),
+        '\x13' : ('cp932', 'Japanese Shift-JIS'),
+        '\x14' : ('cp850', 'Spanish OEM (secondary)'),
+        '\x15' : ('cp437', 'Swedish OEM'),
+        '\x16' : ('cp850', 'Swedish OEM (secondary)'),
+        '\x17' : ('cp865', 'Norwegian OEM'),
+        '\x18' : ('cp437', 'Spanish OEM'),
+        '\x19' : ('cp437', 'English OEM (Britain)'),
+        '\x1A' : ('cp850', 'English OEM (Britain) (secondary)'),
+        '\x1B' : ('cp437', 'English OEM (U.S.)'),
+        '\x1C' : ('cp863', 'French OEM (Canada)'),
+        '\x1D' : ('cp850', 'French OEM (secondary)'),
+        '\x1F' : ('cp852', 'Czech OEM'),
+        '\x22' : ('cp852', 'Hungarian OEM'),
+        '\x23' : ('cp852', 'Polish OEM'),
+        '\x24' : ('cp860', 'Portugese OEM'),
+        '\x25' : ('cp850', 'Potugese OEM (secondary)'),
+        '\x26' : ('cp866', 'Russian OEM'),
+        '\x37' : ('cp850', 'English OEM (U.S.) (secondary)'),
+        '\x40' : ('cp852', 'Romanian OEM'),
+        '\x4D' : ('cp936', 'Chinese GBK (PRC)'),
+        '\x4E' : ('cp949', 'Korean (ANSI/OEM)'),
+        '\x4F' : ('cp950', 'Chinese Big 5 (Taiwan)'),
+        '\x50' : ('cp874', 'Thai (ANSI/OEM)'),
+        '\x57' : ('cp1252', 'ANSI'),
+        '\x58' : ('cp1252', 'Western European ANSI'),
+        '\x59' : ('cp1252', 'Spanish ANSI'),
+        '\x64' : ('cp852', 'Eastern European MS-DOS'),
+        '\x65' : ('cp866', 'Russian MS-DOS'),
+        '\x66' : ('cp865', 'Nordic MS-DOS'),
+        '\x67' : ('cp861', 'Icelandic MS-DOS'),
+        '\x68' : (None, 'Kamenicky (Czech) MS-DOS'),
+        '\x69' : (None, 'Mazovia (Polish) MS-DOS'),
+        '\x6a' : ('cp737', 'Greek MS-DOS (437G)'),
+        '\x6b' : ('cp857', 'Turkish MS-DOS'),
+        '\x78' : ('cp950', 'Traditional Chinese (Hong Kong SAR, Taiwan) Windows'),
+        '\x79' : ('cp949', 'Korean Windows'),
+        '\x7a' : ('cp936', 'Chinese Simplified (PRC, Singapore) Windows'),
+        '\x7b' : ('cp932', 'Japanese Windows'),
+        '\x7c' : ('cp874', 'Thai Windows'),
+        '\x7d' : ('cp1255', 'Hebrew Windows'),
+        '\x7e' : ('cp1256', 'Arabic Windows'),
+        '\xc8' : ('cp1250', 'Eastern European Windows'),
+        '\xc9' : ('cp1251', 'Russian Windows'),
+        '\xca' : ('cp1254', 'Turkish Windows'),
+        '\xcb' : ('cp1253', 'Greek Windows'),
+        '\x96' : ('mac_cyrillic', 'Russian Macintosh'),
+        '\x97' : ('mac_latin2', 'Macintosh EE'),
+        '\x98' : ('mac_greek', 'Greek Macintosh'),
+        '\xf0' : ('utf8', '8-bit unicode'),
+        }
 
 
 default_codepage = code_pages.get(default_codepage, code_pages.get('\x00'))[0]
 
 
 # SQL functions
+
 def pql_select(records, chosen_fields, condition, field_names):
     if chosen_fields != '*':
         field_names = chosen_fields.replace(' ', '').split(',')
     result = condition(records)
-    result.modified = 0, 'record' + ('', 's')[len(result) > 1]
+    result.modified = 0, 'record' + ('', 's')[len(result)>1]
     result.field_names = field_names
     return result
-
 
 def pql_update(records, command, condition, field_names):
     possible = condition(records)
     modified = pql_cmd(command, field_names)(possible)
-    possible.modified = modified, 'record' + ('', 's')[modified > 1]
+    possible.modified = modified, 'record' + ('', 's')[modified>1]
     return possible
-
 
 def pql_delete(records, dead_fields, condition, field_names):
     deleted = condition(records)
-    deleted.modified = len(deleted), 'record' + ('', 's')[len(deleted) > 1]
+    deleted.modified = len(deleted), 'record' + ('', 's')[len(deleted)>1]
     deleted.field_names = field_names
     if dead_fields == '*':
         for record in deleted:
@@ -6212,7 +6659,6 @@ def pql_delete(records, dead_fields, condition, field_names):
             record.write_record()
     return deleted
 
-
 def pql_recall(records, all_fields, condition, field_names):
     if all_fields != '*':
         raise DbfError('SQL RECALL: fields must be * (only able to recover at the record level)')
@@ -6221,9 +6667,8 @@ def pql_recall(records, all_fields, condition, field_names):
         if is_deleted(record):
             revivified.append(record)
             undelete(record)
-    revivified.modfied = len(revivified), 'record' + ('', 's')[len(revivified) > 1]
+    revivified.modfied = len(revivified), 'record' + ('', 's')[len(revivified)>1]
     return revivified
-
 
 def pql_add(records, new_fields, condition, field_names):
     tables = set()
@@ -6232,10 +6677,9 @@ def pql_add(records, new_fields, condition, field_names):
         tables.add(source_table(record))
     for table in tables:
         table.add_fields(new_fields)
-    possible.modified = len(tables), 'table' + ('', 's')[len(tables) > 1]
+    possible.modified = len(tables), 'table' + ('', 's')[len(tables)>1]
     possible.field_names = field_names
     return possible
-
 
 def pql_drop(records, dead_fields, condition, field_names):
     tables = set()
@@ -6244,10 +6688,9 @@ def pql_drop(records, dead_fields, condition, field_names):
         tables.add(source_table(record))
     for table in tables:
         table.delete_fields(dead_fields)
-    possible.modified = len(tables), 'table' + ('', 's')[len(tables) > 1]
+    possible.modified = len(tables), 'table' + ('', 's')[len(tables)>1]
     possible.field_names = field_names
     return possible
-
 
 def pql_pack(records, command, condition, field_names):
     tables = set()
@@ -6256,10 +6699,9 @@ def pql_pack(records, command, condition, field_names):
         tables.add(source_table(record))
     for table in tables:
         table.pack()
-    possible.modified = len(tables), 'table' + ('', 's')[len(tables) > 1]
+    possible.modified = len(tables), 'table' + ('', 's')[len(tables)>1]
     possible.field_names = field_names
     return possible
-
 
 def pql_resize(records, fieldname_newsize, condition, field_names):
     tables = set()
@@ -6270,18 +6712,17 @@ def pql_resize(records, fieldname_newsize, condition, field_names):
     newsize = int(newsize)
     for table in tables:
         table.resize_field(fieldname, newsize)
-    possible.modified = len(tables), 'table' + ('', 's')[len(tables) > 1]
+    possible.modified = len(tables), 'table' + ('', 's')[len(tables)>1]
     possible.field_names = field_names
     return possible
 
-
 def pql_criteria(records, criteria):
     """
-    Creates a function matching the pql criteria
+    creates a function matching the pql criteria
     """
     function = """def func(records):
-    \"\"\"%s
-    \"\"\"
+    '''%s
+    '''
     _matched = dbf.List()
     for _rec in records:
         %s
@@ -6302,14 +6743,13 @@ def pql_criteria(records, criteria):
     exec function in g
     return g['func']
 
-
 def pql_cmd(command, field_names):
     """
-    Creates a function matching to apply command to each record in records
+    creates a function matching to apply command to each record in records
     """
     function = """def func(records):
-    \"\"\"%s
-    \"\"\"
+    '''%s
+    '''
     _changed = 0
     for _rec in records:
         _tmp = dbf.create_template(_rec)
@@ -6341,14 +6781,12 @@ def pql_cmd(command, field_names):
     exec function in g
     return g['func']
 
-
 def pql(records, command):
     """
-    Recognized pql commands are:
-    SELECT, UPDATE | REPLACE, DELETE, RECALL, ADD, DROP
+    recognized pql commands are SELECT, UPDATE | REPLACE, DELETE, RECALL, ADD, DROP
     """
     close_table = False
-    if isinstance(records, (str, unicode)):
+    if isinstance(records, String):
         records = Table(records)
         close_table = True
     try:
@@ -6392,23 +6830,22 @@ pql_functions = {
 
 
 def _nop(value):
-    """Returns parameter unchanged"""
+    """
+    returns parameter unchanged
+    """
     return value
-
 
 def _normalize_tuples(tuples, length, filler):
     """
-    Ensures each tuple is the same length,
-    using filler[-missing] for the gaps
+    ensures each tuple is the same length, using filler[-missing] for the gaps
     """
     final = []
     for t in tuples:
         if len(t) < length:
-            final.append(tuple([item for item in t] + filler[len(t) - length:]))
+            final.append( tuple([item for item in t] + filler[len(t)-length:]) )
         else:
             final.append(t)
     return tuple(final)
-
 
 def _codepage_lookup(cp):
     if cp not in code_pages:
@@ -6423,30 +6860,35 @@ def _codepage_lookup(cp):
             raise DbfError("Unsupported codepage: %s" % cp)
     sd, ld = code_pages[cp]
     return cp, sd, ld
+
+
 # miscellany
 
-
 class _Db4Table(Table):
+    """
+    under development
+    """
+
     version = 'dBase IV w/memos (non-functional)'
     _versionabbr = 'db4'
 
     @MutableDefault
     def _field_types():
         return {
-            'C': {'Type': 'Character', 'Retrieve': retrieve_character, 'Update': update_character, 'Blank': str, 'Init': add_vfp_character},
-            'Y': {'Type': 'Currency', 'Retrieve': retrieve_currency, 'Update': update_currency, 'Blank': Decimal, 'Init': add_vfp_currency},
-            'B': {'Type': 'Double', 'Retrieve': retrieve_double, 'Update': update_double, 'Blank': float, 'Init': add_vfp_double},
-            'F': {'Type': 'Float', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': float, 'Init': add_vfp_numeric},
-            'N': {'Type': 'Numeric', 'Retrieve': retrieve_numeric, 'Update': update_numeric, 'Blank': int, 'Init': add_vfp_numeric},
-            'I': {'Type': 'Integer', 'Retrieve': retrieve_integer, 'Update': update_integer, 'Blank': int, 'Init': add_vfp_integer},
-            'L': {'Type': 'Logical', 'Retrieve': retrieve_logical, 'Update': update_logical, 'Blank': Logical, 'Init': add_logical},
-            'D': {'Type': 'Date', 'Retrieve': retrieve_date, 'Update': update_date, 'Blank': Date, 'Init': add_date},
-            'T': {'Type': 'DateTime', 'Retrieve': retrieve_vfp_datetime, 'Update': update_vfp_datetime, 'Blank': DateTime, 'Init': add_vfp_datetime},
-            'M': {'Type': 'Memo', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': str, 'Init': add_memo},
-            'G': {'Type': 'General', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': str, 'Init': add_memo},
-            'P': {'Type': 'Picture', 'Retrieve': retrieve_memo, 'Update': update_memo, 'Blank': str, 'Init': add_memo},
-            '0': {'Type': '_NullFlags', 'Retrieve': unsupported_type, 'Update': unsupported_type, 'Blank': int, 'Init': None}
-        }
+            'C' : {'Type':'Character', 'Retrieve':retrieve_character, 'Update':update_character, 'Blank':str, 'Init':add_vfp_character},
+            'Y' : {'Type':'Currency', 'Retrieve':retrieve_currency, 'Update':update_currency, 'Blank':Decimal, 'Init':add_vfp_currency},
+            'B' : {'Type':'Double', 'Retrieve':retrieve_double, 'Update':update_double, 'Blank':float, 'Init':add_vfp_double},
+            'F' : {'Type':'Float', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':float, 'Init':add_vfp_numeric},
+            'N' : {'Type':'Numeric', 'Retrieve':retrieve_numeric, 'Update':update_numeric, 'Blank':int, 'Init':add_vfp_numeric},
+            'I' : {'Type':'Integer', 'Retrieve':retrieve_integer, 'Update':update_integer, 'Blank':int, 'Init':add_vfp_integer},
+            'L' : {'Type':'Logical', 'Retrieve':retrieve_logical, 'Update':update_logical, 'Blank':Logical, 'Init':add_logical},
+            'D' : {'Type':'Date', 'Retrieve':retrieve_date, 'Update':update_date, 'Blank':Date, 'Init':add_date},
+            'T' : {'Type':'DateTime', 'Retrieve':retrieve_vfp_datetime, 'Update':update_vfp_datetime, 'Blank':DateTime, 'Init':add_vfp_datetime},
+            'M' : {'Type':'Memo', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':str, 'Init':add_memo},
+            'G' : {'Type':'General', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':str, 'Init':add_memo},
+            'P' : {'Type':'Picture', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':str, 'Init':add_memo},
+            '0' : {'Type':'_NullFlags', 'Retrieve':unsupported_type, 'Update':unsupported_type, 'Blank':int, 'Init':None} }
+
     _memoext = '.dbt'
     _memotypes = ('G', 'M', 'P')
     _memoClass = _VfpMemo
@@ -6468,7 +6910,9 @@ class _Db4Table(Table):
     _dbfTableHeaderExtra = ''
 
     def _check_memo_integrity(self):
-        """dBase III specific"""
+        """
+        dBase IV specific
+        """
         if self._meta.header.version == '\x8b':
             try:
                 self._meta.memo = self._memoClass(self._meta)
@@ -6491,63 +6935,67 @@ class _Db4Table(Table):
 
 
 # utility functions
+
 def create_template(table_or_record, defaults=None):
     if isinstance(table_or_record, Table):
         return RecordTemplate(table_or_record._meta, defaults)
     else:
         return RecordTemplate(table_or_record._meta, table_or_record, defaults)
 
-
 def delete(record):
-    """Marks record as deleted"""
-    if record._meta.status == CLOSED:
+    """
+    marks record as deleted
+    """
+    template = isinstance(record, RecordTemplate)
+    if not template and record._meta.status == CLOSED:
         raise DbfError("%s is closed; cannot delete record" % record._meta.filename)
     record_in_flux = not record._write_to_disk
-    if not record_in_flux:
+    if not template and not record_in_flux:
         record._start_flux()
     try:
         record._data[0] = '*'
-        record._dirty = True
+        if not template:
+            record._dirty = True
     except:
-        if not record_in_flux:
+        if not template and not record_in_flux:
             record._rollback_flux()
         raise
-    if not record_in_flux:
+    if not template and not record_in_flux:
         record._commit_flux()
 
-
-def export(table_or_records, filename, field_names=None, format='csv', header=True, codepage=None):
+def export(table_or_records, filename=None, field_names=None, format='csv', header=True, dialect='dbf', encoding=None):
     """
-    Writes the records using CSV or tab-delimited format, using the
-    filename given if specified, otherwise the table name
-
-    If table_or_records is a collection of records (not an actual table)
-    they should all be of the same format
+    writes the records using CSV or tab-delimited format, using the filename
+    given if specified, otherwise the table name
+    if table_or_records is a collection of records (not an actual table) they
+    should all be of the same format
     """
     table = source_table(table_or_records[0])
+    if filename is None:
+        filename = table.filename
     if field_names is None:
         field_names = table.field_names
-    if isinstance(field_names, (str, unicode)):
+    if isinstance(field_names, String):
         field_names = [f.strip() for f in field_names.split(',')]
     format = format.lower()
     if format not in ('csv', 'tab', 'fixed'):
         raise DbfError("export format: csv, tab, or fixed -- not %s" % format)
     if format == 'fixed':
         format = 'txt'
-    if codepage is None:
-        codepage = table.codepage.name
-    encoder = codecs.getencoder(codepage)
+    if encoding is None:
+        encoding = table.codepage.name
+    encoder = codecs.getencoder(encoding)
     if isinstance(field_names[0], unicode):
         header_names = [encoder(f) for f in field_names]
     else:
         header_names = field_names
     base, ext = os.path.splitext(filename)
     if ext.lower() in ('', '.dbf'):
-        filename = base + "." + format[:3]
-    fd = open(filename, 'w')
+        filename = base + "." + format
     try:
         if format == 'csv':
-            csvfile = csv.writer(fd, dialect='dbf')
+            fd = open(filename, 'wb')
+            csvfile = csv.writer(fd, dialect=dialect)
             if header:
                 csvfile.writerow(header_names)
             for record in table_or_records:
@@ -6560,6 +7008,7 @@ def export(table_or_records, filename, field_names=None, format='csv', header=Tr
                         fields.append(data)
                 csvfile.writerow(fields)
         elif format == 'tab':
+            fd = open(filename, 'w')
             if header:
                 fd.write('\t'.join(header_names) + '\n')
             for record in table_or_records:
@@ -6571,7 +7020,8 @@ def export(table_or_records, filename, field_names=None, format='csv', header=Tr
                     else:
                         fields.append(str(data))
                 fd.write('\t'.join(fields) + '\n')
-        else:  # format == 'fixed'
+        else: # format == 'fixed'
+            fd = open(filename, 'w')
             header = open("%s_layout.txt" % os.path.splitext(filename)[0], 'w')
             header.write("%-15s  Size\n" % "Field Name")
             header.write("%-15s  ----\n" % ("-" * 15))
@@ -6597,9 +7047,10 @@ def export(table_or_records, filename, field_names=None, format='csv', header=Tr
         fd = None
     return len(table_or_records)
 
-
 def field_names(thing):
-    """Fields in table/record, keys in dict"""
+    """
+    fields in table/record, keys in dict
+    """
     if isinstance(thing, dict):
         return thing.keys()
     elif isinstance(thing, (Table, Record, RecordTemplate)):
@@ -6610,21 +7061,21 @@ def field_names(thing):
         for record in thing:    # grab any record
             return record._meta.user_fields[:]
 
-
 def is_deleted(record):
-    """Marked for deletion?"""
+    """
+    marked for deletion?
+    """
     return record._data[0] == '*'
 
-
 def recno(record):
-    """Physical record number"""
+    """
+    physical record number
+    """
     return record._recnum
-
 
 def reset(record, keep_fields=None):
     """
-    Sets record's fields back to original, except for fields in
-    keep_fields
+    sets record's fields back to original, except for fields in keep_fields
     """
     template = record_in_flux = False
     if isinstance(record, RecordTemplate):
@@ -6647,40 +7098,38 @@ def reset(record, keep_fields=None):
         else:
             record._dirty = True
 
-
 def source_table(thingie):
     """
-    Table associated with table | record | index
+    table associated with table | record | index
     """
     table = thingie._meta.table()
     if table is None:
         raise DbfError("table is no longer available")
     return table
 
-
 def undelete(record):
     """
-    Marks record as active
+    marks record as active
     """
-    if record._meta.status == CLOSED:
+    template = isinstance(record, RecordTemplate)
+    if not template and record._meta.status == CLOSED:
         raise DbfError("%s is closed; cannot undelete record" % record._meta.filename)
     record_in_flux = not record._write_to_disk
-    if not record_in_flux:
+    if not template and not record_in_flux:
         record._start_flux()
     try:
         record._data[0] = ' '
-        record._dirty = True
+        if not template:
+            record._dirty = True
     except:
-        if not record_in_flux:
+        if not template and not record_in_flux:
             record._rollback_flux()
         raise
-    if not record_in_flux:
+    if not template and not record_in_flux:
         record._commit_flux()
-
-
 def write(record, **kwargs):
     """
-    Write record data to disk (updates indices)
+    write record data to disk (updates indices)
     """
     if record._meta.status == CLOSED:
         raise DbfError("%s is closed; cannot update record" % record._meta.filename)
@@ -6691,27 +7140,60 @@ def write(record, **kwargs):
     if record._dirty:
         record._write()
 
+def Process(records, start=0, stop=None, filter=None):
+    """commits each record to disk before returning the next one; undoes all changes to that record if exception raised
+    if records is a table, it will be opened and closed if necessary
+    filter function should return True to skip record, False to keep"""
+    already_open = True
+    if isinstance(records, Table):
+        already_open = records.status != CLOSED
+        if not already_open:
+            records.open()
+    try:
+        if stop is None:
+            stop = len(records)
+        for record in records[start:stop]:
+            if filter is not None and filter(record):
+                continue
+            try:
+                record._start_flux()
+                yield record
+            except:
+                record._rollback_flux()
+                raise
+            else:
+                record._commit_flux()
+    finally:
+        if not already_open:
+            records.close()
 
-def Process(records):
+def Templates(records, start=0, stop=None, filter=None):
     """
-    Commits each record to disk before returning the next one.
-    Undoes all changes to that record if exception raised
+    returns a template of each record instead of the record itself
+    if records is a table, it will be opened and closed if necessary
     """
-    for record in records:
-        try:
-            record._start_flux()
-            yield record
-        except:
-            record._rollback_flux()
-        else:
-            record._commit_flux()
-
+    already_open = True
+    if isinstance(records, Table):
+        already_open = records.status != CLOSED
+        if not already_open:
+            records.open()
+    try:
+        if stop is None:
+            stop = len(records)
+        for record in records[start:stop]:
+            if filter is not None and filter(record):
+                continue
+            yield(create_template(record))
+    finally:
+        if not already_open:
+            records.close()
 
 def index(sequence):
-    """Returns integers 0 - len(sequence)"""
+    """
+    returns integers 0 - len(sequence)
+    """
     for i in xrange(len(sequence)):
         yield i
-
 
 def guess_table_type(filename):
     reported = table_type(filename)
@@ -6724,10 +7206,9 @@ def guess_table_type(filename):
         raise DbfError("Tables of type %s not supported" % str(reported))
     return possibles
 
-
 def table_type(filename):
     """
-    Returns text representation of a table's dbf version
+    returns text representation of a table's dbf version
     """
     base, ext = os.path.splitext(filename)
     if ext == '':
@@ -6742,9 +7223,10 @@ def table_type(filename):
         raise DbfError("Unknown dbf type: %s (%x)" % (version, ord(version)))
     return version, version_map[version]
 
-
 def add_fields(table_name, field_specs):
-    """Adds fields to an existing table"""
+    """
+    adds fields to an existing table
+    """
     table = Table(table_name)
     table.open()
     try:
@@ -6752,9 +7234,10 @@ def add_fields(table_name, field_specs):
     finally:
         table.close()
 
-
 def delete_fields(table_name, field_names):
-    """Deletes fields from an existing table"""
+    """
+    deletes fields from an existing table
+    """
     table = Table(table_name)
     table.open()
     try:
@@ -6762,9 +7245,10 @@ def delete_fields(table_name, field_names):
     finally:
         table.close()
 
-
 def first_record(table_name):
-    """Prints the first record of a table"""
+    """
+    prints the first record of a table
+    """
     table = Table(table_name)
     table.open()
     try:
@@ -6772,20 +7256,17 @@ def first_record(table_name):
     finally:
         table.close()
 
-
-def from_csv(csvfile, to_disk=False, filename=None, field_names=None,
-             extra_fields=None, dbf_type='db3', memo_size=64, min_field_size=1,
-             encoding=None, errors=None):
+def from_csv(csvfile, to_disk=False, filename=None, field_names=None, extra_fields=None,
+        dbf_type='db3', memo_size=64, min_field_size=1,
+        encoding=None, errors=None):
     """
-    Creates a Character table from a csv file
-
+    creates a Character table from a csv file
     to_disk will create a table with the same name
     filename will be used if provided
     field_names default to f0, f1, f2, etc, unless specified (list)
-    extra_fields: can be used to add additional fields
-                 should be normal field specifiers (list)
+    extra_fields can be used to add additional fields -- should be normal field specifiers (list)
     """
-    reader = csv.reader(codecs.open(csvfile, 'r', encoding=encoding, errors=errors))
+    reader = csv.reader(codecs.open(csvfile, 'r', encoding='latin-1', errors=errors))
     if field_names:
         if ' ' not in field_names[0]:
             field_names = ['%s M' % fn for fn in field_names]
@@ -6794,7 +7275,14 @@ def from_csv(csvfile, to_disk=False, filename=None, field_names=None,
     mtable = Table(':memory:', [field_names[0]], dbf_type=dbf_type, memo_size=memo_size, codepage=encoding, on_disk=False)
     mtable.open()
     fields_so_far = 1
-    for row in reader:
+    #for row in reader:
+    while reader:
+        try:
+            row = next(reader)
+        except UnicodeEncodeError:
+            row = ['']
+        except StopIteration:
+            break
         while fields_so_far < len(row):
             if fields_so_far == len(field_names):
                 field_names.append('f%d M' % fields_so_far)
@@ -6831,36 +7319,41 @@ def from_csv(csvfile, to_disk=False, filename=None, field_names=None,
     mtable.close()
     return mtable
 
-
 def get_fields(table_name):
-    """Returns the list of field names of a table"""
+    """
+    returns the list of field names of a table
+    """
     table = Table(table_name)
     return table.field_names
 
-
 def info(table_name):
-    """Prints table info"""
+    """
+    prints table info
+    """
     table = Table(table_name)
     print str(table)
 
-
 def rename_field(table_name, oldfield, newfield):
-    """Renames a field in a table"""
+    """
+    renames a field in a table
+    """
     table = Table(table_name)
     try:
         table.rename_field(oldfield, newfield)
     finally:
         table.close()
 
-
 def structure(table_name, field=None):
-    """Returns the definition of a field (or all fields)"""
+    """
+    returns the definition of a field (or all fields)
+    """
     table = Table(table_name)
     return table.structure(field)
 
-
 def hex_dump(records):
-    """just what it says ;)"""
+    """
+    just what it says ;)
+    """
     for index, dummy in enumerate(records):
         chars = dummy._data
         print "%2d: " % index,
@@ -6870,11 +7363,12 @@ def hex_dump(records):
 
 
 # Foxpro functions
+
 def gather(record, data, drop=False):
     """
-    Saves data into a record's fields; writes to disk if not in flux
-    keys with no matching field will raise a FieldMissingError exception
-    unless drop_missing == True
+    saves data into a record's fields; writes to disk if not in flux
+    keys with no matching field will raise a FieldMissingError
+    exception unless drop_missing == True;
     if an Exception occurs the record is restored before reraising
     """
     if isinstance(record, Record) and record._meta.status == CLOSED:
@@ -6898,10 +7392,9 @@ def gather(record, data, drop=False):
     if not record_in_flux:
         record._commit_flux()
 
-
 def scan(table, direction='forward', filter=lambda rec: True):
     """
-    Moves record pointer forward 1; returns False if Eof reached
+    moves record pointer forward 1; returns False if Eof/Bof reached
     table must be derived from _Navigation or have skip() method
     """
     if direction not in ('forward', 'reverse'):
@@ -6920,10 +7413,9 @@ def scan(table, direction='forward', filter=lambda rec: True):
     except no_more_records:
         return False
 
-
 def scatter(record, as_type=create_template, _mappings=getattr(collections, 'Mapping', dict)):
     """
-    Returns as_type() of [fieldnames and] values.
+    returns as_type() of [fieldnames and] values.
     """
     if isinstance(as_type, types.FunctionType):
         return as_type(record)
@@ -6934,7 +7426,9 @@ def scatter(record, as_type=create_template, _mappings=getattr(collections, 'Map
 
 
 # from dbf.api import *
+
 class fake_module(object):
+
     def __init__(self, name, *args):
         self.name = name
         self.__all__ = []
@@ -6946,17 +7440,16 @@ class fake_module(object):
     def register(self):
         sys.modules["%s.%s" % (__name__, self.name)] = self
 
-
 fake_module('api',
-    'Table', 'Record', 'List', 'Index',  'Iter', 'Null', 'Char', 'Date', 'DateTime', 'Time', 'Logical', 'Quantum',
-    'CodePage', 'create_template', 'delete', 'field_names', 'gather', 'is_deleted',
+    'Table', 'Record', 'List', 'Index', 'Relation', 'Iter', 'Null', 'Char', 'Date', 'DateTime', 'Time',
+    'Logical', 'Quantum', 'CodePage', 'create_template', 'delete', 'field_names', 'gather', 'is_deleted',
     'recno', 'source_table', 'reset', 'scatter', 'undelete',
     'NullDate', 'NullDateTime', 'NullTime', 'NoneType', 'NullType', 'Decimal', 'Vapor',
     'Truth', 'Falsth', 'Unknown', 'On', 'Off', 'Other',
     'DbfError', 'DataOverflowError', 'BadDataError', 'FieldMissingError',
-    'InvalidFieldSpecError', 'NonUnicodeError', 'NotFoundError',
+    'FieldSpecError', 'NonUnicodeError', 'NotFoundError',
     'DbfWarning', 'Eof', 'Bof', 'DoNotIndex', 'IndexLocation',
-    'Process',
+    'Process', 'Templates',
     ).register()
 
 dbf = fake_module('dbf', *__all__)

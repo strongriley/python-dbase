@@ -1,10 +1,5 @@
-Repository Status
-=================
-This is an UNOFFICIAL fork of the released package available on http://pypi.python.org/pypi/dbf/
-
-
-dbf v0.94.005
-==============
+dbf v0.95.001
+=============
 
 dbf (also known as python dbase) is a module for reading/writing
 dBase III, FP, VFP, and Clipper .dbf database files.  It's
@@ -26,6 +21,8 @@ attribute access (with the field names as the attributes), and 'with'
 protocols.  Updates to a record object are reflected on disk either
 immediately (using gather() or write()), or at the end of a 'with'
 statement.
+
+Index -- nonpersistent index for a table.
 
 Fields:
     dBase III (Null not supported)
@@ -81,21 +78,37 @@ Custom data types:
 Whirlwind Tour
 --------------
 
-    :::python
-    import datetime
-    import dbf
+import datetime
+import dbf
 
-    table = dbf.Table(':test:', 'name C(25); age N(3,0); birth D; qualified L')
-    table.open()
+table = dbf.Table(':test:', 'name C(25); age N(3,0); birth D; qualified L')
+table.open()
 
-    for datum in (
-            ('Spanky', 7, dbf.Date.fromymd('20010315'), False),
-            ('Spunky', 23, dbf.Date(1989, 07, 23), True),
-            ('Sparky', 99, dbf.Date(), dbf.Unknown),
-            ):
-        table.append(datum)
+for datum in (
+        ('Spanky', 7, dbf.Date.fromymd('20010315'), False),
+        ('Spunky', 23, dbf.Date(1989, 07, 23), True),
+        ('Sparky', 99, dbf.Date(), dbf.Unknown),
+        ):
+    table.append(datum)
 
+for record in table:
+    print record
+    print '--------'
+    print record[0:3]
+    print record['name':'birth']
+    print [record.name, record.age, record.birth]
+    print '--------'
+
+custom = table.new(
+        filename='test_on_disk',
+        default_data_types=dict(C=dbf.Char, D=dbf.Date, L=dbf.Logical),
+        )
+
+with custom:    # automatically opened and closed
     for record in table:
+        custom.append(record)
+    for record in custom:
+        dbf.write(record, name=record.name.upper())
         print record
         print '--------'
         print record[0:3]
@@ -103,21 +116,4 @@ Whirlwind Tour
         print [record.name, record.age, record.birth]
         print '--------'
 
-    custom = table.new(
-            filename='test_on_disk',
-            default_data_types=dict(C=dbf.Char, D=dbf.Date, L=dbf.Logical),
-            )
-
-    with custom:    # automatically opened and closed
-        for record in table:
-            custom.append(record)
-        for record in custom:
-            dbf.write(record, name=record.name.upper())
-            print record
-            print '--------'
-            print record[0:3]
-            print record['name':'birth']
-            print [record.name, record.age, record.birth]
-            print '--------'
-
-    table.close()
+table.close()

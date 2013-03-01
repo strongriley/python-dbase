@@ -11,7 +11,7 @@ import traceback
 
 py_ver = sys.version_info[:2]
 
-if dbf.version != (0, 94, 5):
+if dbf.version != (0, 95, 1):
     raise ValueError("Wrong version of dbf -- should be %d.%02d.%03d" % dbf.version)
 else:
     print "\nTesting dbf version %d.%02d.%03d on %s with Python %s\n" % (
@@ -2508,11 +2508,11 @@ class Test_Quantum(unittest.TestCase):
 
 class Test_Exceptions(unittest.TestCase):
     def test_bad_field_specs_on_creation(self):
-        self.assertRaises(InvalidFieldSpecError, Table, 'blah', 'age N(3,2)', on_disk=False)
-        self.assertRaises(InvalidFieldSpecError, Table, 'blah', 'name C(300)', on_disk=False)
-        self.assertRaises(InvalidFieldSpecError, Table, 'blah', 'born L(9)', on_disk=False)
-        self.assertRaises(InvalidFieldSpecError, Table, 'blah', 'married D(12)', on_disk=False)
-        self.assertRaises(InvalidFieldSpecError, Table, 'blah', 'desc M(1)', on_disk=False)
+        self.assertRaises(FieldSpecError, Table, 'blah', 'age N(3,2)', on_disk=False)
+        self.assertRaises(FieldSpecError, Table, 'blah', 'name C(300)', on_disk=False)
+        self.assertRaises(FieldSpecError, Table, 'blah', 'born L(9)', on_disk=False)
+        self.assertRaises(FieldSpecError, Table, 'blah', 'married D(12)', on_disk=False)
+        self.assertRaises(FieldSpecError, Table, 'blah', 'desc M(1)', on_disk=False)
 
     def test_too_many_fields_on_creation(self):
         fields = []
@@ -2692,20 +2692,34 @@ class Test_Dbf_Creation(unittest.TestCase):
         newtable.close()
         bckup = Table(os.path.join(tempdir, newtable.backup))
         self.assertEqual(bckup.codepage, newtable.codepage)
-
-
-    def test_ignore_memos(self):
-        for dbf_type in dbf.table_types:
-            dbf_file = os.path.join(tempdir, 'tempdb3')
-            table = Table(dbf_file, 'name C(25); wisdom M', dbf_type=dbf_type).open()
-            table.append(('QC Tester', 'A test memo'))
-            table.close()
-            table = Table(dbf_file, dbf_type=dbf_type, ignore_memos=True)
-            table.open()
-            self.assertEqual(table[0]['wisdom'], '(Memo Ignored)',
-                "Memo not ignored when retrieved for dbf type %s" % (dbf_type,))
-            table.close()
-
+    def test_db3_ignore_memos(self):
+        table = Table(os.path.join(tempdir, 'tempdb3'), 'name C(25); wisdom M', dbf_type='db3').open()
+        table.append(('QC Tester', 'check it twice!  check it thrice!  check it . . . uh . . . again!'))
+        table.close()
+        table = Table(os.path.join(tempdir, 'tempdb3'), dbf_type='db3', ignore_memos=True)
+        with table:
+            self.assertEqual(table[0].wisdom, '')
+    def test_fp_ignore_memos(self):
+        table = Table(os.path.join(tempdir, 'tempdb3'), 'name C(25); wisdom M', dbf_type='fp').open()
+        table.append(('QC Tester', 'check it twice!  check it thrice!  check it . . . uh . . . again!'))
+        table.close()
+        table = Table(os.path.join(tempdir, 'tempdb3'), dbf_type='fp', ignore_memos=True)
+        with table:
+            self.assertEqual(table[0].wisdom, '')
+    def test_vfp_ignore_memos(self):
+        table = Table(os.path.join(tempdir, 'tempdb3'), 'name C(25); wisdom M', dbf_type='vfp').open()
+        table.append(('QC Tester', 'check it twice!  check it thrice!  check it . . . uh . . . again!'))
+        table.close()
+        table = Table(os.path.join(tempdir, 'tempdb3'), dbf_type='vfp', ignore_memos=True)
+        with table:
+            self.assertEqual(table[0].wisdom, '')
+    def test_clp_ignore_memos(self):
+        table = Table(os.path.join(tempdir, 'tempdb3'), 'name C(25); wisdom M', dbf_type='clp').open()
+        table.append(('QC Tester', 'check it twice!  check it thrice!  check it . . . uh . . . again!'))
+        table.close()
+        table = Table(os.path.join(tempdir, 'tempdb3'), dbf_type='clp', ignore_memos=True)
+        with table:
+            self.assertEqual(table[0].wisdom, '')
 
 class Test_Dbf_Records(unittest.TestCase):
     "Testing records"
@@ -3700,7 +3714,7 @@ class Test_Dbf_Functions(unittest.TestCase):
         self.assertEqual(i, len(table))
         table.close()
 
-    def test_un_delete(self):
+    def test_undelete(self):
         "delete, undelete"
         table = Table(':memory:', 'name C(10)', dbf_type='db3', on_disk=False)
         table.open()
@@ -4260,32 +4274,6 @@ class Test_Dbf_Functions(unittest.TestCase):
         for alpha in icao:
             table.append((alpha,))
         sorted = table.create_index(lambda rec: rec.icao)
-        self.assertEqual(sorted.index_search('alpha'), 0)
-        self.assertEqual(sorted.index_search('bravo'), 1)
-        self.assertEqual(sorted.index_search('charlie'), 2)
-        self.assertEqual(sorted.index_search('delta'), 3)
-        self.assertEqual(sorted.index_search('echo'), 4)
-        self.assertEqual(sorted.index_search('foxtrot'), 5)
-        self.assertEqual(sorted.index_search('golf'), 6)
-        self.assertEqual(sorted.index_search('hotel'), 7)
-        self.assertEqual(sorted.index_search('india'), 8)
-        self.assertEqual(sorted.index_search('juliet'), 9)
-        self.assertEqual(sorted.index_search('kilo'), 10)
-        self.assertEqual(sorted.index_search('lima'), 11)
-        self.assertEqual(sorted.index_search('mike'), 12)
-        self.assertEqual(sorted.index_search('november'), 13)
-        self.assertEqual(sorted.index_search('oscar'), 14)
-        self.assertEqual(sorted.index_search('papa'), 15)
-        self.assertEqual(sorted.index_search('quebec'), 16)
-        self.assertEqual(sorted.index_search('romeo'), 17)
-        self.assertEqual(sorted.index_search('sierra'), 18)
-        self.assertEqual(sorted.index_search('tango'), 19)
-        self.assertEqual(sorted.index_search('uniform'), 20)
-        self.assertEqual(sorted.index_search('victor'), 21)
-        self.assertEqual(sorted.index_search('whiskey'), 22)
-        self.assertEqual(sorted.index_search('x-ray'), 23)
-        self.assertEqual(sorted.index_search('yankee'), 24)
-        self.assertEqual(sorted.index_search('zulu'), 25)
         self.assertTrue(sorted.index_search('alpha'))
         self.assertTrue(sorted.index_search('bravo'))
         self.assertTrue(sorted.index_search('charlie'))
@@ -4312,6 +4300,32 @@ class Test_Dbf_Functions(unittest.TestCase):
         self.assertTrue(sorted.index_search('x-ray'))
         self.assertTrue(sorted.index_search('yankee'))
         self.assertTrue(sorted.index_search('zulu'))
+        self.assertEqual(sorted.index_search('alpha'), 0)
+        self.assertEqual(sorted.index_search('bravo'), 1)
+        self.assertEqual(sorted.index_search('charlie'), 2)
+        self.assertEqual(sorted.index_search('delta'), 3)
+        self.assertEqual(sorted.index_search('echo'), 4)
+        self.assertEqual(sorted.index_search('foxtrot'), 5)
+        self.assertEqual(sorted.index_search('golf'), 6)
+        self.assertEqual(sorted.index_search('hotel'), 7)
+        self.assertEqual(sorted.index_search('india'), 8)
+        self.assertEqual(sorted.index_search('juliet'), 9)
+        self.assertEqual(sorted.index_search('kilo'), 10)
+        self.assertEqual(sorted.index_search('lima'), 11)
+        self.assertEqual(sorted.index_search('mike'), 12)
+        self.assertEqual(sorted.index_search('november'), 13)
+        self.assertEqual(sorted.index_search('oscar'), 14)
+        self.assertEqual(sorted.index_search('papa'), 15)
+        self.assertEqual(sorted.index_search('quebec'), 16)
+        self.assertEqual(sorted.index_search('romeo'), 17)
+        self.assertEqual(sorted.index_search('sierra'), 18)
+        self.assertEqual(sorted.index_search('tango'), 19)
+        self.assertEqual(sorted.index_search('uniform'), 20)
+        self.assertEqual(sorted.index_search('victor'), 21)
+        self.assertEqual(sorted.index_search('whiskey'), 22)
+        self.assertEqual(sorted.index_search('x-ray'), 23)
+        self.assertEqual(sorted.index_search('yankee'), 24)
+        self.assertEqual(sorted.index_search('zulu'), 25)
         self.assertRaises(NotFoundError, sorted.index_search, 'john')
         self.assertRaises(NotFoundError, sorted.index_search, 'john', partial=True)
         self.assertEqual(sorted.index_search('able', nearest=True), 0)
@@ -4858,13 +4872,9 @@ class TestWhatever(unittest.TestCase):
             table.append({'name':name, 'paid':paid, 'qty':qty, 'orderdate':orderdate, 'desc':desc,
                     'mass':mass, 'weight':weight, 'age':age, 'meeting':meeting, 'misc':misc, 'photo':photo})
         table.close()
-
-
     def tearDown(self):
         self.dbf_table.close()
         self.vfp_table.close()
-
-
 # main
 if __name__ == '__main__':
     tempdir = tempfile.mkdtemp()
