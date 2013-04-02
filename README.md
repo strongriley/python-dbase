@@ -78,6 +78,7 @@ Custom data types:
 Whirlwind Tour
 --------------
 
+```
 import datetime
 import dbf
 
@@ -117,3 +118,4 @@ with custom:    # automatically opened and closed
         print '--------'
 
 table.close()
+```
